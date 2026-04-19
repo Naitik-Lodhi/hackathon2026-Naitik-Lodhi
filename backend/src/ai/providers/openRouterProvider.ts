@@ -2,10 +2,14 @@ import { LLMProvider, LLMResponse } from "../types";
 
 export class OpenRouterProvider implements LLMProvider {
   name = "openrouter";
+  lastStatus: 'active' | 'unavailable' | 'quota_exceeded' = 'unavailable';
+  lastMessage = 'Not called';
 
   async analyze(content: string): Promise<LLMResponse | null> {
     const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) {
+      this.lastStatus = 'unavailable';
+      this.lastMessage = 'LLM unavailable, using deterministic mode';
       console.error("OpenRouter API Key missing");
       return null;
     }
@@ -49,6 +53,12 @@ ${content}
         })
       });
 
+      if (response.status === 429) {
+        this.lastStatus = 'quota_exceeded';
+        this.lastMessage = 'LLM quota exceeded';
+        return null;
+      }
+
       const data = await response.json();
       const text = data.choices?.[0]?.message?.content;
       console.log(`[OpenRouter] RAW RESPONSE:`, text);
@@ -66,8 +76,13 @@ ${content}
           throw new Error("Invalid OpenRouter output structure");
       }
 
+      this.lastStatus = 'active';
+      this.lastMessage = 'LLM active: openrouter';
       return parsed;
-    } catch (err) {
+    } catch (err: any) {
+      const message = String(err?.message ?? err);
+      this.lastStatus = /quota|429|rate|limit/i.test(message) ? 'quota_exceeded' : 'unavailable';
+      this.lastMessage = this.lastStatus === 'quota_exceeded' ? 'LLM quota exceeded' : 'LLM unavailable, using deterministic mode';
       console.error("OpenRouter Provider Error:", err);
       return null;
     }

@@ -10,9 +10,11 @@ export function getLLMProvider(): LLMProvider | null {
 
   switch (providerType.toLowerCase()) {
     case 'openrouter':
+      if (!process.env.OPENROUTER_API_KEY) return null;
       return new OpenRouterProvider();
     case 'gemini':
     default:
+      if (!process.env.GEMINI_API_KEY) return null;
       return new GeminiProvider();
   }
 }

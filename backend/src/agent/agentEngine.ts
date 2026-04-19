@@ -1,197 +1,325 @@
+import { PoolClient } from 'pg';
 import { getClient } from '../db/db';
 import { tools } from '../tools/mockTools';
 import { Ticket } from '../types';
 import { classifyTicket, extractEntities } from './nlpMock';
 import { getLLMProvider } from '../ai/llmService';
 
+type Category = 'refund' | 'cancellation' | 'shipping' | 'warranty' | 'general_query' | 'ambiguous';
+type ToolName = keyof typeof tools;
+
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-export const processTicket = async (ticket: Ticket) => {
-    const client = await getClient();
-    try {
-        await client.query(`UPDATE tickets SET status = 'processing', updated_at = NOW() WHERE id = $1`, [ticket.id]);
-        await client.query(`INSERT INTO ticket_runs (ticket_id, status) VALUES ($1, 'started')`, [ticket.id]);
+const isObject = (value: unknown): value is Record<string, any> => Boolean(value) && typeof value === 'object';
 
-        // PHASE 1: COGNITIVE ANALYSIS (Provider-Agnostic AI)
-        const llmProvider = getLLMProvider();
-        const llmResult = llmProvider ? await llmProvider.analyze(ticket.content) : null;
-        
-        let category: any;
-        let entities: any;
-        let reasoning = "";
-        let confidence = 0;
-        let usedAI = false;
-        let providerName = llmProvider?.name || 'none';
-
-        if (llmResult && llmResult.confidence >= 0.6) {
-            category = llmResult.category;
-            entities = llmResult.entities;
-            reasoning = llmResult.reasoning;
-            confidence = llmResult.confidence;
-            usedAI = true;
-            console.log(`✨ AI Enhancement Active | Provider: ${providerName.toUpperCase()} | Confidence: ${confidence}`);
-        } else {
-            console.log(`⚠️ AI Confidence Low (${llmResult?.confidence || 0}) or failed. Falling back to rules.`);
-            category = classifyTicket(ticket.content);
-            entities = extractEntities(ticket.content);
-        }
-
-        // Log AI Analysis to Audit
-        await client.query(`
-            INSERT INTO audit_logs (ticket_id, step, tool_name, input, output, status, attempt, decision) 
-            VALUES ($1, $2, $3, $4, $5, $6, 1, $7)
-        `, [
-            ticket.id, 
-            0, 
-            'llm_analysis', 
-            JSON.stringify({ content: ticket.content, provider: providerName }), 
-            JSON.stringify({ category, reasoning, confidence }), 
-            'success', 
-            usedAI ? `AI (${providerName}) Classified as ${category.toUpperCase()} | Reasoning: ${reasoning}` : 'Fallback to Rule-Based Engine'
-        ]);
-
-        console.log(`🤖 Agent thinking for ${ticket.id.substring(0, 8)}...`);
-        console.log(`📋 Final Category: ${category.toUpperCase()} | Source: ${usedAI ? 'AI' : 'RULES'}`);
-        console.log(`🔎 Entities: ${JSON.stringify(entities)}`);
-
-        // Required Dynamic Tool Chain Construction
-        const executionPlan: Array<{ name: keyof typeof tools; args: any[] }> = [
-            { name: 'get_customer', args: [entities.email] },
-            { name: 'get_order', args: [entities.order_id] },
-            { name: 'search_knowledge_base', args: [category] }
-        ];
-
-        if (category === 'refund') {
-            executionPlan.push({ name: 'check_refund_eligibility', args: [entities.order_id] });
-        }
-
-        let stepIndex = 1;
-        let chainFailed = false;
-        let refundEligible = false;
-        
-        let confidenceScore: 'HIGH' | 'MEDIUM' | 'LOW' = 'HIGH';
-
-        for (const action of executionPlan) {
-            let attempt = 1;
-            const maxAttempts = 3;
-            let stepSuccess = false;
-
-            while (attempt <= maxAttempts && !stepSuccess) {
-                try {
-                    const toolFn = tools[action.name];
-                    // @ts-ignore
-                    const result = await toolFn(...action.args);
-                    
-                    const decision = 'Step succeeded, continuing process';
-                    
-                    await client.query(`
-                        INSERT INTO audit_logs (ticket_id, step, tool_name, input, output, status, attempt, decision) 
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                    `, [ticket.id, stepIndex, action.name, JSON.stringify(action.args), JSON.stringify(result), 'success', attempt, decision]);
-
-                    stepSuccess = true;
-                    
-                    // Specific logic hook for refund parsing
-                    if (action.name === 'check_refund_eligibility' && result && (result as any).eligible) {
-                        refundEligible = true;
-                    }
-                } catch (err: any) {
-                     const decision = attempt < maxAttempts ? `Retrying... (${attempt}/${maxAttempts - 1})` : 'Tool failed permanently, aborting agent chain';
-                     await client.query(`
-                        INSERT INTO audit_logs (ticket_id, step, tool_name, input, output, status, attempt, decision) 
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                    `, [ticket.id, stepIndex, action.name, JSON.stringify(action.args), JSON.stringify({ error: err.message }), 'failure', attempt, decision]);
-
-                    if (attempt < maxAttempts) {
-                        confidenceScore = 'MEDIUM'; // Downgrade confidence slightly upon retries
-                        await sleep(100 * Math.pow(2, attempt - 1));
-                        attempt++;
-                    } else {
-                        break; 
-                    }
-                }
-            }
-
-            if (!stepSuccess) {
-                chainFailed = true;
-                confidenceScore = 'LOW';
-                break; 
-            }
-            stepIndex++;
-        }
-
-        let finalStatus = 'escalated';
-
-        if (!chainFailed) {
-            if (category === 'refund' && refundEligible) {
-                stepIndex = await executeActionStep(client, ticket.id, 'issue_refund', [entities.order_id, 99.99], stepIndex);
-                stepIndex = await executeActionStep(client, ticket.id, 'send_reply', [ticket.id, "Your refund has been processed automatically."], stepIndex);
-                finalStatus = 'resolved';
-            } else if (category === 'refund' && !refundEligible) {
-                stepIndex = await executeActionStep(client, ticket.id, 'send_reply', [ticket.id, "Unfortunately, you are not eligible for a refund according to our policy."], stepIndex);
-                finalStatus = 'resolved';
-            } else if (!entities.email || !entities.order_id) {
-                // missing data
-                 confidenceScore = 'LOW';
-                 stepIndex = await executeActionStep(client, ticket.id, 'escalate', [ticket.id, "Missing critical entity data. Escalating immediately."], stepIndex);
-                 finalStatus = 'escalated';
-            } else {
-                 stepIndex = await executeActionStep(client, ticket.id, 'send_reply', [ticket.id, "We have received your query and resolved it automatically based on our KB procedures."], stepIndex);
-                 finalStatus = 'resolved';
-            }
-        } else {
-            // failed tools
-            confidenceScore = 'LOW';
-            stepIndex = await executeActionStep(client, ticket.id, 'escalate', [ticket.id, "Repeated tool failure. Escalating to human."], stepIndex);
-            finalStatus = 'escalated';
-        }
-
-        // Final decision log to append confidence visually per instructions
-        await client.query(`
-            INSERT INTO audit_logs (ticket_id, step, tool_name, input, output, status, attempt, decision) 
-            VALUES ($1, $2, $3, $4, $5, $6, 1, $7)
-        `, [ticket.id, stepIndex, 'finalize_decision', JSON.stringify({ finalStatus }), JSON.stringify({ confidenceScore }), 'success', `Decision: ${finalStatus.toUpperCase()} | Confidence: ${confidenceScore}`]);
-
-        console.log(`🎯 Final Decision for ${ticket.id.substring(0, 8)}: ${finalStatus.toUpperCase()} (${confidenceScore})`);
-
-        await client.query(`UPDATE tickets SET status = $1, updated_at = NOW() WHERE id = $2`, [finalStatus, ticket.id]);
-        await client.query(`UPDATE ticket_runs SET status = 'completed', ended_at = NOW() WHERE ticket_id = $1 AND status = 'started'`, [ticket.id]);
-
-    } catch (error) {
-        console.error('Critical failure processing ticket', ticket.id, error);
-        await client.query(`UPDATE tickets SET status = 'escalated', updated_at = NOW() WHERE id = $1`, [ticket.id]);
-    } finally {
-        client.release();
-    }
+const isValidToolOutput = (toolName: ToolName, result: unknown) => {
+  if (toolName === 'get_customer') return result === null || (isObject(result) && (Boolean(result.customer_id) || Boolean(result.id) || Boolean(result.email)) && Boolean(result.email));
+  if (toolName === 'get_order') return result === null || (isObject(result) && (Boolean(result.order_id) || Boolean(result.id)));
+  if (toolName === 'get_product') return result === null || (isObject(result) && (Boolean(result.product_id) || Boolean(result.id) || Boolean(result.name)));
+  if (toolName === 'search_knowledge_base') return isObject(result) && Array.isArray(result.results);
+  if (toolName === 'check_refund_eligibility') return isObject(result) && typeof result.eligible === 'boolean' && Boolean(result.reason);
+  if (toolName === 'check_warranty') return isObject(result) && typeof result.valid === 'boolean' && Boolean(result.reason);
+  if (toolName === 'cancel_order') return isObject(result) && typeof result.cancelled === 'boolean' && Boolean(result.reason);
+  if (toolName === 'issue_refund') return isObject(result) && result.status === 'processed';
+  if (toolName === 'send_reply') return isObject(result) && result.sent === true;
+  if (toolName === 'escalate') return isObject(result) && result.status === 'queued_for_agent';
+  return true;
 };
 
-const executeActionStep = async (client: any, ticketId: string, actionName: keyof typeof tools, args: any[], stepIndex: number) => {
-    let attempt = 1;
-    let success = false;
-    while(attempt <= 3 && !success) {
-        try {
-            const toolFn = tools[actionName];
-            // @ts-ignore
-            const result = await toolFn(...args);
-            await client.query(`
-                INSERT INTO audit_logs (ticket_id, step, tool_name, input, output, status, attempt, decision) 
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            `, [ticketId, stepIndex, actionName, JSON.stringify(args), JSON.stringify(result), 'success', attempt, 'Action succeeded']);
-            success = true;
-        } catch(err: any) {
-             const decision = attempt < 3 ? `Retrying... (${attempt}/2)` : 'Final step action failed permanently';
-             await client.query(`
-                 INSERT INTO audit_logs (ticket_id, step, tool_name, input, output, status, attempt, decision) 
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-             `, [ticketId, stepIndex, actionName, JSON.stringify(args), JSON.stringify({ error: err.message }), 'failure', attempt, decision]);
-             
-             if (attempt < 3) {
-                 await sleep(100 * Math.pow(2, attempt - 1));
-                 attempt++;
-             } else {
-                 break;
-             }
-        }
+const executeTool = async (
+  client: PoolClient,
+  ticketId: string,
+  stepIndex: number,
+  actionName: ToolName,
+  args: any[],
+) => {
+  let attempt = 1;
+  let retries = 0;
+
+  while (attempt <= 3) {
+    try {
+      const toolFn = tools[actionName] as (...toolArgs: any[]) => Promise<any>;
+      const result = await toolFn(...args);
+      const valid = isValidToolOutput(actionName, result);
+      await client.query(
+        `INSERT INTO audit_logs (ticket_id, step, tool_name, input, output, status, attempt, decision)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          ticketId,
+          stepIndex,
+          actionName,
+          JSON.stringify(args),
+          JSON.stringify(result),
+          valid ? 'success' : 'failure',
+          attempt,
+          valid ? 'Tool output validated successfully.' : 'Malformed or incomplete tool output; using fallback path.',
+        ],
+      );
+      return { result, valid, retries };
+    } catch (err: any) {
+      const retrying = attempt < 3;
+      await client.query(
+        `INSERT INTO audit_logs (ticket_id, step, tool_name, input, output, status, attempt, decision)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          ticketId,
+          stepIndex,
+          actionName,
+          JSON.stringify(args),
+          JSON.stringify({ error: err.message }),
+          'failure',
+          attempt,
+          retrying ? 'Tool failed; retrying with exponential backoff.' : 'Tool failed permanently; escalating.',
+        ],
+      );
+      if (!retrying) return { result: null, valid: false, retries };
+      retries += 1;
+      await sleep(100 * Math.pow(2, attempt - 1));
+      attempt += 1;
     }
-    return stepIndex + 1;
-}
+  }
+
+  return { result: null, valid: false, retries };
+};
+
+const priorityLabel = (priority: number) => priority >= 3 ? 'urgent' : priority === 2 ? 'high' : 'medium';
+
+const firstString = (record: any, fields: string[]) => {
+  for (const field of fields) {
+    const value = record?.[field];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+};
+
+const firstNumber = (record: any, fields: string[], fallback = 0) => {
+  for (const field of fields) {
+    const value = record?.[field];
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && Number.isFinite(Number(value))) return Number(value);
+  }
+  return fallback;
+};
+
+const calibrateConfidence = (base: number, missingEntities: number, retries: number, invalidOutputs: number, category: Category) => {
+  let score = base;
+  score -= missingEntities * 0.14;
+  score -= retries * 0.08;
+  score -= invalidOutputs * 0.18;
+  if (category === 'ambiguous') score -= 0.25;
+  score = Math.max(0, Math.min(1, score));
+  const label: 'HIGH' | 'MEDIUM' | 'LOW' = score >= 0.78 ? 'HIGH' : score >= 0.6 ? 'MEDIUM' : 'LOW';
+  return { score: Number(score.toFixed(2)), label };
+};
+
+export const processTicket = async (ticket: Ticket) => {
+  const client = await getClient();
+  let finalStatus = 'escalated';
+
+  try {
+    await client.query(`UPDATE tickets SET status = 'processing', updated_at = NOW() WHERE id = $1`, [ticket.id]);
+    await client.query(`INSERT INTO ticket_runs (ticket_id, status) VALUES ($1, 'started')`, [ticket.id]);
+
+    const llmProvider = getLLMProvider();
+    const llmResult = llmProvider ? await llmProvider.analyze(ticket.content) : null;
+    const ruleEntities = extractEntities(ticket.content);
+    const providerName = llmProvider?.name ?? 'none';
+    const usedAI = Boolean(llmResult && llmResult.confidence >= 0.6);
+    const llmStatus =
+      llmResult ? 'active' :
+      llmProvider?.lastStatus === 'quota_exceeded' ? 'quota_exceeded' :
+      'fallback';
+    const llmMessage =
+      usedAI ? `LLM active: ${providerName}` :
+      llmResult ? `LLM active: ${providerName}; deterministic fallback used due to low confidence` :
+      llmProvider?.lastStatus === 'quota_exceeded' ? 'LLM quota exceeded' :
+      'LLM unavailable, using deterministic mode';
+    console.log(llmMessage);
+    let category = (usedAI ? llmResult?.category : classifyTicket(ticket.content)) as Category;
+    const entities = {
+      ...ruleEntities,
+      ...(usedAI ? llmResult?.entities : {}),
+      email: (ticket as any).customer_email ?? (usedAI ? llmResult?.entities.email : ruleEntities.email),
+      order_id: (usedAI ? llmResult?.entities.order_id : ruleEntities.order_id) ?? ruleEntities.order_id,
+      product_id: (usedAI ? llmResult?.entities.product_id : ruleEntities.product_id) ?? ruleEntities.product_id,
+    };
+
+    const llmConfidence = usedAI ? llmResult!.confidence : 0.72;
+    let retryCount = 0;
+    let invalidOutputs = 0;
+
+    await client.query(
+      `INSERT INTO audit_logs (ticket_id, step, tool_name, input, output, status, attempt, decision)
+       VALUES ($1, 0, 'llm_analysis', $2, $3, 'success', 1, $4)`,
+      [
+        ticket.id,
+        JSON.stringify({ content: ticket.content, provider: providerName }),
+        JSON.stringify({ category, entities, llmConfidence, llmStatus, fallback_used: !usedAI, reasoning: llmResult?.reasoning ?? 'Rule-based deterministic classifier used.' }),
+        usedAI ? `AI provider ${providerName} classified the ticket.` : llmMessage,
+      ],
+    );
+
+    await client.query(
+      `UPDATE tickets SET llm_status = $1, fallback_used = $2 WHERE id = $3`,
+      [llmStatus, !usedAI, ticket.id],
+    );
+
+    const executionPlan: Array<{ name: ToolName; args: any[] }> = [
+      { name: 'get_customer', args: [entities.email] },
+      { name: 'get_order', args: [entities.order_id ?? entities.email, entities.email] },
+      { name: 'search_knowledge_base', args: [category] },
+    ];
+
+    if (entities.product_id) {
+      executionPlan.push({ name: 'get_product', args: [entities.product_id] });
+    }
+
+    const context: Record<string, any> = {};
+    let stepIndex = 1;
+
+    for (const action of executionPlan) {
+      const outcome = await executeTool(client, ticket.id, stepIndex, action.name, action.args);
+      retryCount += outcome.retries;
+      if (!outcome.valid) invalidOutputs += 1;
+      context[action.name] = outcome.result;
+      stepIndex += 1;
+    }
+
+    const order = context.get_order;
+    const customer = context.get_customer;
+    const productId = entities.product_id ?? firstString(order, ['product_id', 'sku']) ?? null;
+
+    if (!context.get_product && productId) {
+      const productOutcome = await executeTool(client, ticket.id, stepIndex, 'get_product', [productId]);
+      retryCount += productOutcome.retries;
+      if (!productOutcome.valid) invalidOutputs += 1;
+      context.get_product = productOutcome.result;
+      stepIndex += 1;
+    }
+
+    const orderId = firstString(order, ['order_id', 'id']);
+    const orderAmount = firstNumber(order, ['amount', 'total_amount', 'total'], 0);
+    const returnDeadline = firstString(order, ['return_deadline', 'return_by']);
+    const deliveryDate = firstString(order, ['delivery_date', 'delivered_at']);
+    const productName = firstString(context.get_product, ['name', 'title']) ?? productId;
+    const warrantyMonths = firstNumber(context.get_product, ['warranty_months', 'warrantyMonths'], 0);
+    const orderStatus = firstString(order, ['status']) ?? 'unknown';
+    const orderNotes = firstString(order, ['notes', 'description']) ?? JSON.stringify(order);
+
+    if (category === 'refund' && deliveryDate && warrantyMonths > 0 && /stopped working|manufacturing defect/i.test(ticket.content) && returnDeadline && new Date((ticket as any).created_at) > new Date(`${returnDeadline}T23:59:59Z`)) {
+      category = 'warranty';
+    }
+
+    const missingEntities = [customer, order].filter(value => !value).length;
+    const confidence = calibrateConfidence(llmConfidence, missingEntities, retryCount, invalidOutputs, category);
+
+    if (!customer || !order) {
+      const missing = !customer && !order ? 'registered customer and order' : !customer ? 'registered customer' : 'order';
+      await executeTool(client, ticket.id, stepIndex, 'send_reply', [
+        ticket.id,
+        `I could not verify the ${missing} from the details provided. Please reply with the registered email address and order ID so we can continue.`,
+      ]);
+      finalStatus = 'resolved';
+      stepIndex += 1;
+    } else if (category === 'cancellation') {
+      const cancellation = await executeTool(client, ticket.id, stepIndex, 'cancel_order', [entities.order_id ?? orderId, entities.email]);
+      stepIndex += 1;
+      const result = cancellation.result;
+      await executeTool(client, ticket.id, stepIndex, 'send_reply', [
+        ticket.id,
+        result?.cancelled
+          ? `Your order ${orderId} has been cancelled. You will receive confirmation by email within 1 hour.`
+          : `Order ${orderId} cannot be cancelled because ${result?.reason ?? 'it is not eligible under the cancellation policy'}.`,
+      ]);
+      finalStatus = 'resolved';
+      stepIndex += 1;
+    } else if (category === 'warranty') {
+      const warranty = await executeTool(client, ticket.id, stepIndex, 'check_warranty', [orderId, productId, (ticket as any).created_at, ticket.content]);
+      stepIndex += 1;
+      if (warranty.result?.valid) {
+        await executeTool(client, ticket.id, stepIndex, 'escalate', [
+          ticket.id,
+          `Warranty claim for ${productName}: ${warranty.result.reason} Customer reports: ${ticket.content}. Priority: ${priorityLabel(ticket.priority)}.`,
+          ticket.priority,
+        ]);
+        finalStatus = 'escalated';
+      } else {
+        await executeTool(client, ticket.id, stepIndex, 'send_reply', [
+          ticket.id,
+          `I checked the warranty rules for order ${orderId}. ${warranty.result?.reason ?? 'Warranty coverage could not be verified.'}`,
+        ]);
+        finalStatus = 'resolved';
+      }
+      stepIndex += 1;
+    } else if (category === 'refund') {
+      const eligibility = await executeTool(client, ticket.id, stepIndex, 'check_refund_eligibility', [orderId, entities.email, ticket.content, (ticket as any).created_at]);
+      stepIndex += 1;
+      if (eligibility.result?.eligible) {
+        if (orderAmount > 200 || /replacement/i.test(ticket.content)) {
+          await executeTool(client, ticket.id, stepIndex, 'escalate', [
+            ticket.id,
+            `Refund/replacement needs human review. Eligibility: ${eligibility.result.reason}. Amount: ${orderAmount}. Priority: ${priorityLabel(ticket.priority)}.`,
+            ticket.priority,
+          ]);
+          finalStatus = 'escalated';
+        } else {
+          await executeTool(client, ticket.id, stepIndex, 'issue_refund', [orderId, orderAmount]);
+          stepIndex += 1;
+          await executeTool(client, ticket.id, stepIndex, 'send_reply', [
+            ticket.id,
+            `Your refund for order ${orderId} has been approved and processed to the original payment method. It usually appears within 5-7 business days.`,
+          ]);
+          finalStatus = 'resolved';
+        }
+      } else {
+        await executeTool(client, ticket.id, stepIndex, 'send_reply', [
+          ticket.id,
+          `I checked order ${orderId}. This request is not eligible for an automatic refund: ${eligibility.result?.reason ?? 'eligibility could not be confirmed'}.`,
+        ]);
+        finalStatus = 'resolved';
+      }
+      stepIndex += 1;
+    } else if (category === 'shipping') {
+      await executeTool(client, ticket.id, stepIndex, 'send_reply', [
+        ticket.id,
+        `Order ${orderId} is currently ${orderStatus}. ${orderNotes}`,
+      ]);
+      finalStatus = 'resolved';
+      stepIndex += 1;
+    } else if (category === 'general_query') {
+      await executeTool(client, ticket.id, stepIndex, 'send_reply', [
+        ticket.id,
+        'Returns depend on product category: most items are 30 days, electronics accessories are 60 days, and high-value electronics are 15 days. Exchanges are available for wrong size, wrong colour, or wrong item, subject to stock.',
+      ]);
+      finalStatus = 'resolved';
+      stepIndex += 1;
+    } else {
+      await executeTool(client, ticket.id, stepIndex, 'send_reply', [
+        ticket.id,
+        'Please share the order ID, product name, and what went wrong so I can route this correctly.',
+      ]);
+      finalStatus = 'resolved';
+      stepIndex += 1;
+    }
+
+    await client.query(
+      `INSERT INTO audit_logs (ticket_id, step, tool_name, input, output, status, attempt, decision)
+       VALUES ($1, $2, 'finalize_decision', $3, $4, 'success', 1, $5)`,
+      [
+        ticket.id,
+        stepIndex,
+        JSON.stringify({ finalStatus, category }),
+        JSON.stringify({ confidenceScore: confidence.label, confidenceValue: confidence.score, retryCount, invalidOutputs, missingEntities, dataSource: (ticket as any).data_source, llmStatus, fallbackUsed: !usedAI }),
+        `Decision: ${finalStatus.toUpperCase()} | Confidence: ${confidence.label}`,
+      ],
+    );
+
+    await client.query(`UPDATE tickets SET status = $1, llm_status = $2, fallback_used = $3, updated_at = NOW() WHERE id = $4`, [finalStatus, llmStatus, !usedAI, ticket.id]);
+    await client.query(`UPDATE ticket_runs SET status = 'completed', ended_at = NOW() WHERE ticket_id = $1 AND status = 'started'`, [ticket.id]);
+  } catch (error) {
+    console.error('Critical failure processing ticket', ticket.id, error);
+    await client.query(`UPDATE tickets SET status = 'escalated', updated_at = NOW() WHERE id = $1`, [ticket.id]);
+  } finally {
+    client.release();
+  }
+};

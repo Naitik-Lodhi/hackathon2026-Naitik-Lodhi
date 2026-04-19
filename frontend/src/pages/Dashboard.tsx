@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useTickets } from '../hooks/useTickets';
 import { ticketApi } from '../api/ticketApi';
 import { ProcessingStatus } from '../components/ProcessingStatus';
@@ -18,16 +18,47 @@ export const Dashboard: React.FC = () => {
 
   const [isSeeding, setIsSeeding] = useState(false);
   const [isTriggering, setIsTriggering] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [systemStatus, setSystemStatus] = useState<any>(null);
+  const [lastImport, setLastImport] = useState<string | null>(null);
 
   const handleSeed = async () => {
     setIsSeeding(true);
     try {
-      await ticketApi.seedTickets(10);
-      refresh();
+      const res = await ticketApi.seedTickets();
+      if (!res.success) alert(res.error?.message || 'Failed to seed default dataset');
+      setLastImport(res.message || 'Default dataset loaded');
+      await refresh();
+      const statusRes = await ticketApi.getSystemStatus();
+      if (statusRes.success) setSystemStatus(statusRes.data);
     } catch (err) {
       alert('Failed to seed tickets');
     } finally {
       setIsSeeding(false);
+    }
+  };
+
+  const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    try {
+      const parsed = JSON.parse(await file.text());
+      const res = await ticketApi.importData(file.name, parsed);
+      if (!res.success) {
+        alert(res.error?.message || 'Upload rejected by validation');
+      } else {
+        setLastImport(res.message || `Imported ${file.name}`);
+        await refresh();
+        const statusRes = await ticketApi.getSystemStatus();
+        if (statusRes.success) setSystemStatus(statusRes.data);
+      }
+    } catch (err: any) {
+      alert(`Invalid JSON upload: ${err.message}`);
+    } finally {
+      setIsUploading(false);
+      event.target.value = '';
     }
   };
 
@@ -36,7 +67,9 @@ export const Dashboard: React.FC = () => {
     try {
       const res = await ticketApi.triggerProcessing();
       if (!res.success) alert(res.message || 'Already running');
-      refresh();
+      await refresh();
+      const statusRes = await ticketApi.getSystemStatus();
+      if (statusRes.success) setSystemStatus(statusRes.data);
     } catch (err) {
       alert('Failed to trigger agent');
     } finally {
@@ -45,6 +78,14 @@ export const Dashboard: React.FC = () => {
   };
 
   const selectedTicket = tickets.find(t => t.id === selectedTicketId) || null;
+
+  useEffect(() => {
+    ticketApi.getSystemStatus()
+      .then(res => {
+        if (res.success) setSystemStatus(res.data);
+      })
+      .catch(() => undefined);
+  }, [tickets.length, currentTicket?.status]);
 
   return (
     <div className="dashboard-container">
@@ -55,12 +96,22 @@ export const Dashboard: React.FC = () => {
           </h1>
         </div>
         <div className="header-actions">
+          <label className="btn-outline" style={{ cursor: isUploading ? 'not-allowed' : 'pointer' }}>
+            {isUploading ? 'Uploading...' : 'Upload JSON'}
+            <input
+              type="file"
+              accept="application/json,.json"
+              onChange={handleUpload}
+              disabled={isUploading}
+              style={{ display: 'none' }}
+            />
+          </label>
           <button 
             className="btn-outline" 
             onClick={handleSeed} 
             disabled={isSeeding}
           >
-            {isSeeding ? 'Seeding...' : 'Seed Data'}
+            {isSeeding ? 'Loading...' : 'Use Default Dataset'}
           </button>
           <button 
             className="btn-primary" 
@@ -72,7 +123,13 @@ export const Dashboard: React.FC = () => {
         </div>
       </header>
 
-      <ProcessingStatus currentTicket={currentTicket} />
+      {lastImport && (
+        <div style={{ marginBottom: '1rem', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
+          {lastImport}
+        </div>
+      )}
+
+      <ProcessingStatus currentTicket={currentTicket} systemStatus={systemStatus} />
 
       <main className="main-grid">
         <section className="scroll-area">

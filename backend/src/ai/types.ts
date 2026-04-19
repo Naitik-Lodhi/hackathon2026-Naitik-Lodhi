@@ -11,5 +11,7 @@ export interface LLMResponse {
 
 export interface LLMProvider {
   name: string;
+  lastStatus?: 'active' | 'unavailable' | 'quota_exceeded';
+  lastMessage?: string;
   analyze(content: string): Promise<LLMResponse | null>;
 }

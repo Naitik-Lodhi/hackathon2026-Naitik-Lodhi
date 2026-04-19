@@ -6,7 +6,9 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "ts-node src/index.ts",
-    "dev": "nodemon src/index.ts"
+    "dev": "nodemon src/index.ts",
+    "seed": "ts-node src/db/seedTickets.ts",
+    "export:audit": "ts-node src/db/exportAuditLog.ts"
   },
   "keywords": [],
   "author": "",

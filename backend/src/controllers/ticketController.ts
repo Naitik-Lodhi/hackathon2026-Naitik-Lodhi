@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import { query } from '../db/db';
 import { ApiResponse } from '../types';
 import { processAllTickets, isAgentActive } from '../services/ticketService';
+import { seedTicketsFromData } from '../db/seedTickets';
+import { importDataset, loadDefaultDataset } from '../services/dataImportService';
 
 export const getTickets = async (req: Request, res: Response) => {
   try {
@@ -54,46 +56,63 @@ export const createTicket = async (req: Request, res: Response) => {
             return res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'Content is required' } });
         }
 
-        const result = await query(`INSERT INTO tickets (content, priority, status) VALUES ($1, $2, 'queued') RETURNING *`, [content, priority]);
+        const result = await query(`INSERT INTO tickets (content, priority, status, data_source) VALUES ($1, $2, 'queued', 'manual') RETURNING *`, [content, priority]);
         res.status(201).json({ success: true, data: result.rows[0] });
     } catch (err: any) {
         res.status(500).json({ success: false, error: { code: 'SERVER_ERROR', message: err.message } });
     }
 }
 
-export const seedMockData = async (req: Request, res: Response) => {
+export const seedData = async (req: Request, res: Response) => {
   try {
-    const templates = [
-        "Where is my refund for {id}?",
-        "My {product} arrived broken.",
-        "Can I change the shipping address for {id}?",
-        "How do I apply a discount code to {product}?",
-        "The {product} battery life is not as advertised.",
-        "I want to escalate {id} to a manager.",
-        "Is {product} in stock?",
-        "Can you cancel my order {id}?",
-        "Lost my tracking number for {id}.",
-        "I was double charged for {product}."
-    ];
+    const hasBody = req.body && Object.keys(req.body).length > 0;
+    const dataset = hasBody ? req.body : loadDefaultDataset();
+    const summary = hasBody
+      ? await importDataset(dataset, req.body.source || 'upload')
+      : await seedTicketsFromData();
+    res.json({ success: true, data: summary, message: `Loaded ${summary.tickets} tickets from ${summary.source}` } as ApiResponse<any>);
+  } catch (err: any) {
+    console.error('Seed validation/import failed', err);
+    res.status(400).json({ success: false, error: { code: 'INVALID_IMPORT', message: err.message } });
+  }
+};
 
-    const products = ["headphones", "smartwatch", "laptop", "phone case", "charger"];
-    
-    const count = req.body.count || 20;
-    
-    for (let i = 0; i < count; i++) {
-        const priority = Math.floor(Math.random() * 3) + 1;
-        const template = templates[Math.floor(Math.random() * templates.length)];
-        const product = products[Math.floor(Math.random() * products.length)];
-        const id = `order-${Math.floor(Math.random() * 9000) + 1000}`;
-        
-        const text = template
-            .replace('{id}', id)
-            .replace('{product}', product) + ` [ID: ${Date.now()}-${i}]`;
-            
-        await query(`INSERT INTO tickets (content, priority) VALUES ($1, $2)`, [text, priority]);
+export const importExternalData = async (req: Request, res: Response) => {
+  try {
+    const { source = 'api', data } = req.body ?? {};
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      return res.status(400).json({ success: false, error: { code: 'BAD_REQUEST', message: 'Request requires { source, data } with data as an object.' } });
     }
-    
-    res.json({ success: true, message: `Seeded ${count} mock tickets` } as ApiResponse<any>);
+
+    const summary = await importDataset(data, source);
+    res.json({ success: true, data: summary, message: `Imported ${summary.tickets} tickets from ${summary.source}` } as ApiResponse<any>);
+  } catch (err: any) {
+    console.error('External import failed', err);
+    res.status(400).json({ success: false, error: { code: 'INVALID_IMPORT', message: err.message } });
+  }
+};
+
+export const getSystemStatus = async (req: Request, res: Response) => {
+  try {
+    const ticketStats = await query(`
+      SELECT
+        COALESCE(data_source, 'manual') AS data_source,
+        COALESCE(llm_status, 'not_run') AS llm_status,
+        fallback_used,
+        COUNT(*)::int AS count
+      FROM tickets
+      GROUP BY data_source, llm_status, fallback_used
+      ORDER BY data_source, llm_status, fallback_used
+    `);
+    res.json({
+      success: true,
+      data: {
+        agent_active: isAgentActive(),
+        llm_configured: process.env.USE_LLM === 'true',
+        provider: process.env.LLM_PROVIDER || 'gemini',
+        stats: ticketStats.rows,
+      },
+    } as ApiResponse<any>);
   } catch (err: any) {
     res.status(500).json({ success: false, error: { code: 'SERVER_ERROR', message: err.message } });
   }
@@ -101,8 +120,8 @@ export const seedMockData = async (req: Request, res: Response) => {
 
 export const resetDatabase = async (req: Request, res: Response) => {
     try {
-        await query(`TRUNCATE tickets, audit_logs RESTART IDENTITY CASCADE`);
-        res.json({ success: true, message: 'Database reset successful (Tickets and Audit Logs cleared)' });
+        await query(`TRUNCATE tickets, ticket_runs, audit_logs, support_data_records RESTART IDENTITY CASCADE`);
+        res.json({ success: true, message: 'Database reset successful' });
     } catch (err: any) {
         res.status(500).json({ success: false, error: { code: 'SERVER_ERROR', message: err.message } });
     }

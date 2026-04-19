@@ -3,10 +3,18 @@ import type { Ticket } from '../types';
 
 interface ProcessingStatusProps {
   currentTicket: Ticket | null;
+  systemStatus?: any;
 }
 
-export const ProcessingStatus: React.FC<ProcessingStatusProps> = ({ currentTicket }) => {
+export const ProcessingStatus: React.FC<ProcessingStatusProps> = ({ currentTicket, systemStatus }) => {
   const isProcessing = !!currentTicket;
+  const latestStats = systemStatus?.stats ?? [];
+  const fallbackCount = latestStats
+    .filter((row: any) => row.fallback_used || row.llm_status === 'fallback' || row.llm_status === 'quota_exceeded')
+    .reduce((sum: number, row: any) => sum + Number(row.count), 0);
+  const activeCount = latestStats
+    .filter((row: any) => row.llm_status === 'active')
+    .reduce((sum: number, row: any) => sum + Number(row.count), 0);
 
   return (
     <div className={`processing-banner ${isProcessing ? 'active' : ''}`}>
@@ -24,7 +32,7 @@ export const ProcessingStatus: React.FC<ProcessingStatusProps> = ({ currentTicke
         <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>
           {isProcessing 
             ? `Processing Ticket #${currentTicket.id.substring(0, 8)}` 
-            : 'Static Monitoring Mode'}
+            : `Data-driven mode | LLM active: ${activeCount} | fallback: ${fallbackCount}`}
         </h3>
       </div>
       {isProcessing && (

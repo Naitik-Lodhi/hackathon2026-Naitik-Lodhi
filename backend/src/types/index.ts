@@ -10,7 +10,15 @@ export interface ApiResponse<T> {
 
 export interface Ticket {
   id: string;
+  external_ticket_id?: string;
+  customer_email?: string;
+  subject?: string;
   content: string;
+  expected_action?: string;
+  source?: string;
+  data_source?: string;
+  llm_status?: string;
+  fallback_used?: boolean;
   status: 'queued' | 'processing' | 'resolved' | 'escalated';
   priority: number;
   created_at: string;

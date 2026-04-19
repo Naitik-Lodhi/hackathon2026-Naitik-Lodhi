@@ -1,5 +1,11 @@
 export interface Ticket {
   id: string;
+  external_ticket_id?: string;
+  customer_email?: string;
+  subject?: string;
+  data_source?: string;
+  llm_status?: string;
+  fallback_used?: boolean;
   content: string;
   status: 'queued' | 'processing' | 'resolved' | 'escalated';
   priority: number;

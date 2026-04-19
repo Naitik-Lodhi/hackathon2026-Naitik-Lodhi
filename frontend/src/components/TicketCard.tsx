@@ -36,6 +36,11 @@ export const TicketCard: React.FC<TicketCardProps> = ({ ticket, isSelected, onSe
         <span>Priority: {ticket.priority}</span>
         <span>{new Date(ticket.created_at).toLocaleDateString()}</span>
       </div>
+      <div style={{ marginTop: '0.5rem', fontSize: '0.7rem', color: 'var(--text-muted)', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+        <span>Source: {ticket.data_source || 'manual'}</span>
+        <span>LLM: {ticket.llm_status || 'not run'}</span>
+        {ticket.fallback_used && <span>Fallback used</span>}
+      </div>
     </div>
   );
 };

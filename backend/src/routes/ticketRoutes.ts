@@ -3,7 +3,9 @@ import {
     getTickets, 
     getTicket, 
     getTicketAudit, 
-    seedMockData, 
+    seedData,
+    importExternalData,
+    getSystemStatus,
     triggerAgent, 
     getCurrentProcessingTicket,
     createTicket,
@@ -15,10 +17,12 @@ const router = Router();
 router.get('/', getTickets);
 router.post('/tickets', createTicket);
 router.post('/reset', resetDatabase);
-router.post('/seed', seedMockData);
+router.post('/seed', seedData);
+router.post('/import', importExternalData);
 router.post('/trigger', triggerAgent);
+router.get('/status', getSystemStatus);
 router.get('/current', getCurrentProcessingTicket);
-router.get('/:id', getTicket);
 router.get('/:id/audit', getTicketAudit);
+router.get('/:id', getTicket);
 
 export default router;

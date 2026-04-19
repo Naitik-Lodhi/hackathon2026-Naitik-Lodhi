@@ -4,60 +4,56 @@
 
 export const classifyTicket = (content: string): 'refund' | 'cancellation' | 'shipping' | 'warranty' | 'general_query' | 'ambiguous' => {
     const text = content.toLowerCase();
-    
-    if (text.includes('refund') || text.includes('double charged') || text.includes('money back')) {
-        return 'refund';
-    }
+
     if (text.includes('cancel')) {
         return 'cancellation';
     }
-    if (text.includes('shipping') || text.includes('tracking') || text.includes('where is')) {
+    if (text.includes('where is') || text.includes('tracking') || text.includes('in transit') || text.includes('shipping')) {
         return 'shipping';
     }
-    if (text.includes('broken') || text.includes('battery') || text.includes('warranty')) {
+    if (text.includes('warranty') || text.includes('stopped working') || text.includes('is broken') || text.includes('isnt working') || text.includes("isn't working")) {
         return 'warranty';
     }
-    if (text.includes('stock') || text.includes('apply a discount')) {
-        return 'general_query';
+    if (text.includes('refund') || text.includes('return') || text.includes('replacement') || text.includes('wrong size') || text.includes('wrong colour') || text.includes('wrong color') || text.includes('wrong item') || text.includes('damaged') || text.includes('cracked') || text.includes('double charged')) {
+        return 'refund';
     }
-    if (text.includes('escalate') || text.includes('manager')) {
-        return 'ambiguous';
+    if (text.includes('policy') || text.includes('how long') || text.includes('exchange') || text.includes('what is your return')) {
+        return 'general_query';
     }
 
     return 'ambiguous';
 };
 
+const deterministicHash = (value: string) => {
+    let hash = 2166136261;
+    for (const char of value) {
+        hash ^= char.charCodeAt(0);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16);
+};
 
 export const extractEntities = (content: string) => {
-    // Highly deterministic mocks for demo purposes. 
-    // Usually uses RegEx or LLMs, here we just extract fake IDs consistently if keywords exist.
     const text = content.toLowerCase();
     
-    let email = null;
-    let order_id = null;
-    let product_id = null;
+    let email: string | null = null;
+    let order_id: string | null = null;
+    let product_id: string | null = null;
 
-    // Simulate finding an email
-    if (text.includes('@')) {
-        const match = content.match(/\S+@\S+\.\S+/);
-        if (match) email = match[0];
-    } else {
-        // Fallback fake deterministic mappings
-        email = "customer+" + Math.floor(Math.random() * 1000) + "@mock.com";
-    }
+    const emailMatch = content.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+    email = emailMatch ? emailMatch[0].toLowerCase() : `unknown-${deterministicHash(content)}@deterministic.local`;
 
-    // finding an order ID (#123)
-    const orderMatch = content.match(/#(\d+)/);
-    if (orderMatch) {
-        order_id = 'order-' + orderMatch[1];
-    } else {
-        // Deterministic fallback based on length or just a generic order
-        order_id = 'order-' + (content.length % 1000);
-    }
+    const orderMatch = content.match(/\bORD-\d{4}\b/i);
+    order_id = orderMatch ? orderMatch[0].toUpperCase() : null;
 
-    if (text.includes('headphones') || text.includes('battery')) {
-        product_id = 'prod-audio-01';
-    }
+    if (text.includes('headphone')) product_id = 'P001';
+    if (text.includes('running shoe') || text.includes('shoes')) product_id = 'P002';
+    if (text.includes('coffee maker') || text.includes('brewmaster')) product_id = 'P003';
+    if (text.includes('laptop stand')) product_id = 'P004';
+    if (text.includes('yoga mat')) product_id = 'P005';
+    if (text.includes('watch')) product_id = 'P006';
+    if (text.includes('lamp')) product_id = 'P007';
+    if (text.includes('speaker')) product_id = 'P008';
 
     return { email, order_id, product_id };
 };

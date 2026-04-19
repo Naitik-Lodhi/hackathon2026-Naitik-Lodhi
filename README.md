@@ -1,0 +1,91 @@
+# ShopWave Autonomous Support Resolution Agent
+
+An autonomous support agent for the Hackathon 2026 ShopWave challenge. The system ingests the 20 provided support tickets, classifies each issue, executes deterministic support tools, writes an audit trail for every decision, and resolves or escalates tickets with policy-backed reasoning.
+
+## Tech Stack
+
+- Backend: Node.js, TypeScript, Express, PostgreSQL
+- Frontend: React, TypeScript, Vite
+- AI: Optional Gemini or OpenRouter LLM analysis with deterministic rule fallback
+- Data source: default files in `data/`, uploaded JSON, or `/api/import`
+
+## Setup
+
+Start PostgreSQL:
+
+```bash
+cd backend
+docker-compose up
+```
+
+Run the backend:
+
+```bash
+cd backend
+npm install
+npm run dev
+```
+
+Run the frontend:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Optional environment setup:
+
+```bash
+cp .env.example backend/.env
+```
+
+Keep real API keys only in `.env`. The repository tracks `.env.example` placeholders only.
+
+## Data Seeding And Demo Run
+
+Seed the default dataset from the provided data folder:
+
+```bash
+cd backend
+npm run seed
+```
+
+Open the admin console, click `Run Agent Queue`, or call the API trigger endpoint. Export the audit log after the run:
+
+```bash
+cd backend
+npm run export:audit
+```
+
+This writes `audit_log.json` at the repository root.
+
+## API Endpoints
+
+All endpoints are under `/api`.
+
+- `GET /api` - list tickets
+- `POST /api/tickets` - create a ticket manually
+- `POST /api/seed` - with no body, load the default dataset; with a JSON body, validate and import that dataset
+- `POST /api/import` - import external data as `{ "source": "api", "data": { ... } }`
+- `POST /api/reset` - clear tickets and audit logs
+- `POST /api/trigger` - process queued tickets concurrently
+- `GET /api/status` - data source and LLM/fallback status summary
+- `GET /api/current` - get the currently processing ticket
+- `GET /api/:id` - get one ticket
+- `GET /api/:id/audit` - get the audit trail for one ticket
+
+## Agent Flow
+
+1. Load a queued ticket and mark it `processing`.
+2. Run optional LLM analysis; fall back to deterministic classification and entity extraction when unavailable or low confidence.
+3. Build a tool chain that always calls `get_customer`, `get_order`, and `search_knowledge_base`; call `get_product` whenever a product can be identified.
+4. Validate every tool output before using it. Malformed or missing data lowers confidence and routes the agent to a fallback response or escalation.
+5. Execute the right flow:
+   - Refund: check refund eligibility, issue refund only when eligible, or explain denial.
+   - Warranty: verify warranty policy and escalate valid claims to a specialist.
+   - Cancellation: call `cancel_order` and reply based on order status.
+   - Shipping/general/ambiguous: answer from order data or ask targeted clarifying questions.
+6. Write every tool call, retry, decision, and final confidence score to `audit_logs`.
+
+Tools read imported customer, order, product, and knowledge-base records from PostgreSQL only. Default files are used only to populate the database.

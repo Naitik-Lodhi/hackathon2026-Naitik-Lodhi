@@ -3,6 +3,8 @@ import { LLMProvider, LLMResponse } from "../types";
 
 export class GeminiProvider implements LLMProvider {
   name = "gemini";
+  lastStatus: 'active' | 'unavailable' | 'quota_exceeded' = 'unavailable';
+  lastMessage = 'Not called';
   private ai: GoogleGenAI;
 
   constructor() {
@@ -56,8 +58,13 @@ ${content}
           throw new Error("Invalid Gemini output structure");
       }
 
+      this.lastStatus = 'active';
+      this.lastMessage = 'LLM active: gemini';
       return parsed;
-    } catch (err) {
+    } catch (err: any) {
+      const message = String(err?.message ?? err);
+      this.lastStatus = /quota|429|resource_exhausted|rate/i.test(message) ? 'quota_exceeded' : 'unavailable';
+      this.lastMessage = this.lastStatus === 'quota_exceeded' ? 'LLM quota exceeded' : 'LLM unavailable, using deterministic mode';
       console.error("Gemini Provider Error:", err);
       return null;
     }
