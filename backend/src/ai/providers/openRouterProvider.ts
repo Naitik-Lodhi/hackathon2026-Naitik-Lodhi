@@ -1,4 +1,3 @@
-import fetch from "node-fetch";
 import { LLMProvider, LLMResponse } from "../types";
 
 export class OpenRouterProvider implements LLMProvider {

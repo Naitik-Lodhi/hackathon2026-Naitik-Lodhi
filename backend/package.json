@@ -8,8 +8,7 @@
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "clean": "rm -rf dist",
-    "build": "rm -rf dist && tsc && mkdir -p dist/db && cp src/db/schema.sql dist/db/",
+    "build": "npm install && rm -rf dist && tsc && mkdir -p dist/db && cp src/db/schema.sql dist/db/",
     "start": "node dist/index.js",
     "dev": "nodemon src/index.ts",
     "seed": "ts-node src/db/seedTickets.ts",
@@ -23,20 +22,20 @@
   "dependencies": {
     "@google/genai": "^1.50.1",
     "@google/generative-ai": "^0.24.1",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "pg": "^8.20.0",
+    "uuid": "^13.0.0"
+  },
+  "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^25.6.0",
     "@types/pg": "^8.20.0",
     "@types/uuid": "^10.0.0",
-    "cors": "^2.8.6",
-    "dotenv": "^17.4.2",
-    "express": "^5.2.1",
-    "pg": "^8.20.0",
-    "typescript": "^6.0.3",
-    "uuid": "^13.0.0"
-  },
-  "devDependencies": {
     "nodemon": "^3.1.14",
-    "ts-node": "^10.9.2"
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3"
   }
 }
