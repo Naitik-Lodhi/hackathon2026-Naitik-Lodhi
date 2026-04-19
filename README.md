@@ -19,7 +19,7 @@ An autonomous support agent for the Hackathon 2026 ShopWave challenge. The syste
 
 ## 🎬 Demo Video
 
-[Watch Demo](./demo/demo.mp4)
+[Watch Demo](https://drive.google.com/file/d/1jfwW6MZGbNIPiSHw2k1FJa363YEl14Hz/view?usp=drive_link)
 
 This demo shows end-to-end ticket processing, tool execution, and autonomous audit logging.
 
