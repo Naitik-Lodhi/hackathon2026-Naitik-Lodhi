@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { query } from '../db/db';
 import { ApiResponse } from '../types';
-import { processAllTickets, isAgentActive } from '../services/ticketService';
+import { processAllTickets, isAgentActive, scheduleAgentRun } from '../services/ticketService';
 import { seedTicketsFromData } from '../db/seedTickets';
 import { importDataset, loadDefaultDataset } from '../services/dataImportService';
 
@@ -57,7 +57,8 @@ export const createTicket = async (req: Request, res: Response) => {
         }
 
         const result = await query(`INSERT INTO tickets (content, priority, status, data_source) VALUES ($1, $2, 'queued', 'manual') RETURNING *`, [content, priority]);
-        res.status(201).json({ success: true, data: result.rows[0] });
+        scheduleAgentRun(0);
+        res.status(201).json({ success: true, data: result.rows[0], message: 'Ticket accepted and queued for automatic processing.' });
     } catch (err: any) {
         res.status(500).json({ success: false, error: { code: 'SERVER_ERROR', message: err.message } });
     }
@@ -70,7 +71,8 @@ export const seedData = async (req: Request, res: Response) => {
     const summary = hasBody
       ? await importDataset(dataset, req.body.source || 'upload')
       : await seedTicketsFromData();
-    res.json({ success: true, data: summary, message: `Loaded ${summary.tickets} tickets from ${summary.source}` } as ApiResponse<any>);
+    scheduleAgentRun(0);
+    res.json({ success: true, data: summary, message: `Loaded ${summary.tickets} tickets from ${summary.source}. Processing started automatically.` } as ApiResponse<any>);
   } catch (err: any) {
     console.error('Seed validation/import failed', err);
     res.status(400).json({ success: false, error: { code: 'INVALID_IMPORT', message: err.message } });
@@ -85,7 +87,8 @@ export const importExternalData = async (req: Request, res: Response) => {
     }
 
     const summary = await importDataset(data, source);
-    res.json({ success: true, data: summary, message: `Imported ${summary.tickets} tickets from ${summary.source}` } as ApiResponse<any>);
+    scheduleAgentRun(0);
+    res.json({ success: true, data: summary, message: `Imported ${summary.tickets} tickets from ${summary.source}. Processing started automatically.` } as ApiResponse<any>);
   } catch (err: any) {
     console.error('External import failed', err);
     res.status(400).json({ success: false, error: { code: 'INVALID_IMPORT', message: err.message } });

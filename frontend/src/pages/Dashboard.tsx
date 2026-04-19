@@ -17,7 +17,6 @@ export const Dashboard: React.FC = () => {
   } = useTickets();
 
   const [isSeeding, setIsSeeding] = useState(false);
-  const [isTriggering, setIsTriggering] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [systemStatus, setSystemStatus] = useState<any>(null);
   const [lastImport, setLastImport] = useState<string | null>(null);
@@ -62,21 +61,6 @@ export const Dashboard: React.FC = () => {
     }
   };
 
-  const handleTrigger = async () => {
-    setIsTriggering(true);
-    try {
-      const res = await ticketApi.triggerProcessing();
-      if (!res.success) alert(res.message || 'Already running');
-      await refresh();
-      const statusRes = await ticketApi.getSystemStatus();
-      if (statusRes.success) setSystemStatus(statusRes.data);
-    } catch (err) {
-      alert('Failed to trigger agent');
-    } finally {
-      setIsTriggering(false);
-    }
-  };
-
   const selectedTicket = tickets.find(t => t.id === selectedTicketId) || null;
 
   useEffect(() => {
@@ -113,13 +97,9 @@ export const Dashboard: React.FC = () => {
           >
             {isSeeding ? 'Loading...' : 'Use Default Dataset'}
           </button>
-          <button 
-            className="btn-primary" 
-            onClick={handleTrigger} 
-            disabled={isTriggering}
-          >
-            {isTriggering ? 'Starting...' : 'Run Agent Queue'}
-          </button>
+          <span className="btn-primary" style={{ cursor: 'default' }}>
+            Auto Processing Enabled
+          </span>
         </div>
       </header>
 

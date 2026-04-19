@@ -51,7 +51,7 @@ cd backend
 npm run seed
 ```
 
-Open the admin console, click `Run Agent Queue`, or call the API trigger endpoint. Export the audit log after the run:
+Open the admin console and load or upload tickets. Processing starts automatically as soon as tickets are inserted. Export the audit log after the run:
 
 ```bash
 cd backend
@@ -69,7 +69,7 @@ All endpoints are under `/api`.
 - `POST /api/seed` - with no body, load the default dataset; with a JSON body, validate and import that dataset
 - `POST /api/import` - import external data as `{ "source": "api", "data": { ... } }`
 - `POST /api/reset` - clear tickets and audit logs
-- `POST /api/trigger` - process queued tickets concurrently
+- `POST /api/trigger` - optional compatibility endpoint; normal processing starts automatically when tickets are created, seeded, or imported
 - `GET /api/status` - data source and LLM/fallback status summary
 - `GET /api/current` - get the currently processing ticket
 - `GET /api/:id` - get one ticket
@@ -88,4 +88,4 @@ All endpoints are under `/api`.
    - Shipping/general/ambiguous: answer from order data or ask targeted clarifying questions.
 6. Write every tool call, retry, decision, and final confidence score to `audit_logs`.
 
-Tools read imported customer, order, product, and knowledge-base records from PostgreSQL only. Default files are used only to populate the database.
+Tools read imported customer, order, product, and knowledge-base records from PostgreSQL only. Default files are used only to populate the database. A queue watcher starts on server boot, wakes immediately after ticket creation/import, and keeps a polling safety net for any missed queued ticket.
