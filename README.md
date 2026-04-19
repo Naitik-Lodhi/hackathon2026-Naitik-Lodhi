@@ -9,6 +9,48 @@ An autonomous support agent for the Hackathon 2026 ShopWave challenge. The syste
 - AI: Optional Gemini or OpenRouter LLM analysis with deterministic rule fallback
 - Data source: default files in `data/`, uploaded JSON, or `/api/import`
 
+## LLM Integration (Optional and Pluggable)
+
+The system is designed to operate in two modes:
+
+1. Deterministic Mode (Default)
+
+The agent works fully without any LLM.
+
+Uses rule-based classification and entity extraction
+Executes tool chains using structured data from the database
+Applies knowledge-base driven policies for decisions
+Ensures consistent and reproducible results
+
+This guarantees reliability even when AI services are unavailable.
+
+2. LLM-Enhanced Mode (Optional)
+
+If an API key is provided, the system can enhance reasoning using an LLM.
+
+Supported providers:
+
+Gemini (Google)
+OpenRouter (multi-model support)
+
+To enable LLM:
+
+USE_LLM=true
+LLM_PROVIDER=gemini   # or openrouter
+GEMINI_API_KEY=your_key
+OPENROUTER_API_KEY=your_key
+Behavior
+If LLM is available → used for classification and reasoning
+If LLM fails, quota is exceeded, or key is missing → system automatically falls back to deterministic mode
+No processing is blocked due to LLM failure
+Why This Design
+
+This architecture ensures:
+
+High reliability (no hard dependency on external AI)
+Flexibility (plug any provider)
+Production readiness (graceful degradation)
+
 ## Setup
 
 Start PostgreSQL:
