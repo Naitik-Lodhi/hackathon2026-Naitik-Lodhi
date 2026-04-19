@@ -9,6 +9,20 @@ An autonomous support agent for the Hackathon 2026 ShopWave challenge. The syste
 - AI: Optional Gemini or OpenRouter LLM analysis with deterministic rule fallback
 - Data source: default files in `data/`, uploaded JSON, or `/api/import`
 
+## 🌐 Live Deployment
+
+### Frontend
+[https://hackathon2026-naitik-lodhi.vercel.app/](https://hackathon2026-naitik-lodhi.vercel.app/)
+
+### Backend API
+[https://hackathon2026-naitik-lodhi.onrender.com/](https://hackathon2026-naitik-lodhi.onrender.com/)
+
+## 🎬 Demo Video
+
+[Watch Demo](./demo/demo.mp4)
+
+This demo shows end-to-end ticket processing, tool execution, and autonomous audit logging.
+
 ## LLM Integration (Optional and Pluggable)
 
 The system is designed to operate in two modes:
