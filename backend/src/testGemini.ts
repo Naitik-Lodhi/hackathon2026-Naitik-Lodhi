@@ -21,7 +21,7 @@ async function testLLM() {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "mistralai/mistral-7b-instruct",
+        model: "openrouter/free",
         messages: [
           {
             role: "user",

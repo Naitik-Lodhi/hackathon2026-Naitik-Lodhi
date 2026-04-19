@@ -1,3 +1,4 @@
+import fetch from "node-fetch";
 import { LLMProvider, LLMResponse } from "../types";
 
 export class OpenRouterProvider implements LLMProvider {
@@ -7,10 +8,10 @@ export class OpenRouterProvider implements LLMProvider {
 
   async analyze(content: string): Promise<LLMResponse | null> {
     const apiKey = process.env.OPENROUTER_API_KEY;
+
     if (!apiKey) {
       this.lastStatus = 'unavailable';
-      this.lastMessage = 'LLM unavailable, using deterministic mode';
-      console.error("OpenRouter API Key missing");
+      this.lastMessage = 'LLM unavailable (missing API key)';
       return null;
     }
 
@@ -21,7 +22,6 @@ You are a support reasoning agent.
 STRICT RULES:
 - Return ONLY valid JSON
 - No extra text outside JSON
-- No explanations outside JSON
 
 Format:
 {
@@ -43,47 +43,96 @@ ${content}
         method: "POST",
         headers: {
           "Authorization": `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": "https://github.com/shop-wave-agent",
-          "X-Title": "ShopWave Autonomous Agent"
+          "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          model: "openai/gpt-3.5-turbo",
+          // ✅ better stable free model
+          model: "meta-llama/llama-3-8b-instruct",
           messages: [{ role: "user", content: prompt }]
         })
       });
 
-      if (response.status === 429) {
-        this.lastStatus = 'quota_exceeded';
-        this.lastMessage = 'LLM quota exceeded';
+      const data:any = await response.json();
+
+      // 🔥 DEBUG FULL RESPONSE
+      console.log("🔥 FULL OPENROUTER RESPONSE:", JSON.stringify(data, null, 2));
+
+      // ❌ HANDLE API ERRORS FIRST
+      if (data.error) {
+        console.error("❌ OpenRouter API Error:", data.error);
+
+        if (data.error.code === 429) {
+          this.lastStatus = 'quota_exceeded';
+          this.lastMessage = 'LLM quota exceeded';
+        } else {
+          this.lastStatus = 'unavailable';
+          this.lastMessage = 'LLM provider error';
+        }
+
         return null;
       }
 
-      const data = await response.json();
-      const text = data.choices?.[0]?.message?.content;
-      console.log(`[OpenRouter] RAW RESPONSE:`, text);
+      // ✅ UNIVERSAL PARSE
+      const rawText =
+        data.choices?.[0]?.message?.content ||
+        data.choices?.[0]?.text ||
+        data.choices?.[0]?.delta?.content;
 
-      if (!text) return null;
+      if (!rawText) {
+        console.error("❌ No content in OpenRouter response");
+        this.lastStatus = 'unavailable';
+        return null;
+      }
 
-      const start = text.indexOf('{');
-      const end = text.lastIndexOf('}');
-      if (start === -1 || end === -1) return null;
+      console.log("✅ RAW TEXT:", rawText);
 
-      const jsonString = text.slice(start, end + 1);
-      const parsed = JSON.parse(jsonString);
+      // 🧠 EXTRACT JSON
+      const start = rawText.indexOf('{');
+      const end = rawText.lastIndexOf('}');
 
+      if (start === -1 || end === -1) {
+        console.error("❌ JSON not found in LLM response");
+        this.lastStatus = 'unavailable';
+        return null;
+      }
+
+      const jsonString = rawText.slice(start, end + 1);
+
+      let parsed: LLMResponse;
+      try {
+        parsed = JSON.parse(jsonString);
+      } catch (e) {
+        console.error("❌ JSON parse failed:", jsonString);
+        this.lastStatus = 'unavailable';
+        return null;
+      }
+
+      // ✅ VALIDATE
       if (!parsed.category || parsed.confidence === undefined) {
-          throw new Error("Invalid OpenRouter output structure");
+        console.error("❌ Invalid structure:", parsed);
+        this.lastStatus = 'unavailable';
+        return null;
       }
 
       this.lastStatus = 'active';
       this.lastMessage = 'LLM active: openrouter';
+
       return parsed;
+
     } catch (err: any) {
+      console.error("❌ OpenRouter Provider Error:", err);
+
       const message = String(err?.message ?? err);
-      this.lastStatus = /quota|429|rate|limit/i.test(message) ? 'quota_exceeded' : 'unavailable';
-      this.lastMessage = this.lastStatus === 'quota_exceeded' ? 'LLM quota exceeded' : 'LLM unavailable, using deterministic mode';
-      console.error("OpenRouter Provider Error:", err);
+
+      this.lastStatus = /quota|429|rate|limit/i.test(message)
+        ? 'quota_exceeded'
+        : 'unavailable';
+
+      this.lastMessage =
+        this.lastStatus === 'quota_exceeded'
+          ? 'LLM quota exceeded'
+          : 'LLM unavailable, using deterministic mode';
+
       return null;
     }
   }
