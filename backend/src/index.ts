@@ -15,6 +15,16 @@ app.use(express.json());
 
 app.use('/api', ticketRoutes);
 
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'ShopWave Agent API is running', 
+    endpoints: {
+      health: '/health',
+      tickets: '/api'
+    }
+  });
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
