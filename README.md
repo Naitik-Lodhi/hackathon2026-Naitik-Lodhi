@@ -23,6 +23,10 @@ An autonomous support agent for the Hackathon 2026 ShopWave challenge. The syste
 
 This demo shows end-to-end ticket processing, tool execution, and autonomous audit logging.
 
+## 🏗️ Architecture Diagram
+
+![Architecture Diagram](./shopwave_architecture_diagram.svg)
+
 ## LLM Integration (Optional and Pluggable)
 
 The system is designed to operate in two modes:
