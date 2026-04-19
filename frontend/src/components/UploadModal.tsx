@@ -30,7 +30,38 @@ export const UploadModal: React.FC<UploadModalProps> = ({ isOpen, onClose, onSuc
       const dataset: any = { replace };
       
       for (const [key, file] of Object.entries(files)) {
-        if (file) {
+        if (!file) continue;
+
+        if (key === 'knowledge_base') {
+          const extension = file.name.split('.').pop()?.toLowerCase();
+          if (extension === 'json') {
+            const text = await file.text();
+            dataset[key] = JSON.parse(text);
+          } else if (extension === 'pdf') {
+            // Convert PDF to base64
+            const reader = new FileReader();
+            const base64Promise = new Promise<string>((resolve) => {
+              reader.onload = () => resolve(reader.result as string);
+              reader.readAsDataURL(file);
+            });
+            dataset[key] = {
+              _type: 'pdf',
+              _name: file.name,
+              _data: await base64Promise
+            };
+          } else if (extension === 'md' || extension === 'txt') {
+            const text = await file.text();
+            dataset[key] = {
+              _type: extension,
+              _name: file.name,
+              _data: text
+            };
+          } else {
+            alert(`Unsupported file type for knowledge base: ${extension}`);
+            setIsUploading(false);
+            return;
+          }
+        } else {
           const text = await file.text();
           dataset[key] = JSON.parse(text);
         }
@@ -44,7 +75,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({ isOpen, onClose, onSuc
         alert(res.error?.message || 'Upload failed');
       }
     } catch (err: any) {
-      alert(`Error parsing JSON: ${err.message}`);
+      alert(`Error processing file: ${err.message}`);
     } finally {
       setIsUploading(false);
     }
@@ -54,7 +85,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({ isOpen, onClose, onSuc
     <div className="modal-overlay">
       <div className="modal-content card" style={{ maxWidth: '500px', width: '90%' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-          <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Upload JSON Data</h2>
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Upload Data</h2>
           <button className="btn-icon" onClick={onClose} disabled={isUploading}>✕</button>
         </div>
 
@@ -62,11 +93,11 @@ export const UploadModal: React.FC<UploadModalProps> = ({ isOpen, onClose, onSuc
           {['customers', 'orders', 'products', 'knowledge_base', 'tickets'].map(key => (
             <div key={key}>
               <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem', textTransform: 'capitalize' }}>
-                {key.replace('_', ' ')} JSON {key === 'tickets' ? '(optional)' : ''}
+                {key.replace('_', ' ')} {key === 'knowledge_base' ? '(.json, .md, .txt, .pdf)' : 'JSON'} {key === 'tickets' ? '(optional)' : ''}
               </label>
               <input 
                 type="file" 
-                accept=".json" 
+                accept={key === 'knowledge_base' ? ".json,.md,.txt,.pdf" : ".json"} 
                 onChange={(e) => handleFileChange(key, e.target.files?.[0] || null)}
                 style={{ fontSize: '0.875rem' }}
                 disabled={isUploading}

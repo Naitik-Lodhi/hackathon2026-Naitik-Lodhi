@@ -82,11 +82,15 @@ export const Dashboard: React.FC = () => {
   const selectedTicket = tickets.find(t => t.id === selectedTicketId) || null;
 
   useEffect(() => {
+    console.log("Checking system status...");
     ticketApi.getSystemStatus()
       .then(res => {
+        console.log("Status response:", res);
         if (res.success) setSystemStatus(res.data);
       })
-      .catch(() => undefined);
+      .catch(err => {
+        console.error("Failed to fetch system status:", err);
+      });
   }, [tickets.length, currentTicket?.status]);
 
   return (
