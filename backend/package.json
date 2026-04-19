@@ -2,14 +2,18 @@
   "name": "backend",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "dist/index.js",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "clean": "rimraf dist",
-    "build": "npm run clean && tsc && echo Backend build successful.",
+    "clean": "rm -rf dist || rmdir /s /q dist",
+    "build": "npm run clean && tsc && mkdir -p dist/db && cp src/db/schema.sql dist/db/",
     "start": "node dist/index.js",
     "dev": "nodemon src/index.ts",
     "seed": "ts-node src/db/seedTickets.ts",
+    "seed:prod": "node dist/db/seedTickets.js",
     "export:audit": "ts-node src/db/exportAuditLog.ts"
   },
   "keywords": [],
@@ -32,7 +36,6 @@
     "@types/pg": "^8.20.0",
     "@types/uuid": "^10.0.0",
     "nodemon": "^3.1.14",
-    "rimraf": "^6.1.3",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.3"
   }
