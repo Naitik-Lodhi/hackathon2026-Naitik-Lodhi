@@ -107,6 +107,15 @@ export const getSystemStatus = async (req: Request, res: Response) => {
       GROUP BY data_source, llm_status, fallback_used
       ORDER BY data_source, llm_status, fallback_used
     `);
+
+    const recordCounts = await query(`
+      SELECT 
+        (SELECT COUNT(*) FROM customers)::int as customers,
+        (SELECT COUNT(*) FROM products)::int as products,
+        (SELECT COUNT(*) FROM orders)::int as orders,
+        (SELECT COUNT(*) FROM knowledge_base)::int as kb
+    `);
+
     res.json({
       success: true,
       data: {
@@ -114,6 +123,7 @@ export const getSystemStatus = async (req: Request, res: Response) => {
         llm_configured: process.env.USE_LLM === 'true',
         provider: process.env.LLM_PROVIDER || 'gemini',
         stats: ticketStats.rows,
+        counts: recordCounts.rows[0]
       },
     } as ApiResponse<any>);
   } catch (err: any) {

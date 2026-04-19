@@ -24,15 +24,6 @@ export const classifyTicket = (content: string): 'refund' | 'cancellation' | 'sh
     return 'ambiguous';
 };
 
-const deterministicHash = (value: string) => {
-    let hash = 2166136261;
-    for (const char of value) {
-        hash ^= char.charCodeAt(0);
-        hash = Math.imul(hash, 16777619);
-    }
-    return (hash >>> 0).toString(16);
-};
-
 export const extractEntities = (content: string) => {
     const text = content.toLowerCase();
     
@@ -41,19 +32,13 @@ export const extractEntities = (content: string) => {
     let product_id: string | null = null;
 
     const emailMatch = content.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-    email = emailMatch ? emailMatch[0].toLowerCase() : `unknown-${deterministicHash(content)}@deterministic.local`;
+    email = emailMatch ? emailMatch[0].toLowerCase() : null;
 
-    const orderMatch = content.match(/\bORD-\d{4}\b/i);
+    const orderMatch = content.match(/\bORD-\d{4,}\b/i);
     order_id = orderMatch ? orderMatch[0].toUpperCase() : null;
 
-    if (text.includes('headphone')) product_id = 'P001';
-    if (text.includes('running shoe') || text.includes('shoes')) product_id = 'P002';
-    if (text.includes('coffee maker') || text.includes('brewmaster')) product_id = 'P003';
-    if (text.includes('laptop stand')) product_id = 'P004';
-    if (text.includes('yoga mat')) product_id = 'P005';
-    if (text.includes('watch')) product_id = 'P006';
-    if (text.includes('lamp')) product_id = 'P007';
-    if (text.includes('speaker')) product_id = 'P008';
+    const productMatch = content.match(/\bP\d{3,}\b/i);
+    product_id = productMatch ? productMatch[0].toUpperCase() : null;
 
     return { email, order_id, product_id };
 };

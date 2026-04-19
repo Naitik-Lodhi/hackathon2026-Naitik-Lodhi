@@ -1,35 +1,21 @@
 import { query } from '../db/db';
 
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
 const deterministicToolCall = async <T>(fn: () => Promise<T>): Promise<T> => {
-  await delay(25);
   return fn();
 };
 
-const normalizeDate = (dateValue?: string | null) => dateValue ? dateValue.slice(0, 10) : null;
+const normalizeDate = (dateValue?: string | Date | null) => {
+  if (!dateValue) return null;
+  const iso = typeof dateValue === 'string' ? dateValue : dateValue.toISOString();
+  return iso.slice(0, 10);
+};
 
-const addMonths = (dateValue: string, months: number) => {
-  const date = new Date(`${dateValue.slice(0, 10)}T00:00:00Z`);
+const addMonths = (dateValue: string | Date, months: number) => {
+  const date = typeof dateValue === 'string' 
+    ? new Date(`${dateValue.slice(0, 10)}T00:00:00Z`)
+    : new Date(dateValue);
   date.setUTCMonth(date.getUTCMonth() + months);
   return date;
-};
-
-const firstString = (record: any, fields: string[]) => {
-  for (const field of fields) {
-    const value = record?.[field];
-    if (typeof value === 'string' && value.trim()) return value.trim();
-  }
-  return null;
-};
-
-const firstNumber = (record: any, fields: string[], fallback = 0) => {
-  for (const field of fields) {
-    const value = record?.[field];
-    if (typeof value === 'number' && Number.isFinite(value)) return value;
-    if (typeof value === 'string' && Number.isFinite(Number(value))) return Number(value);
-  }
-  return fallback;
 };
 
 const isDefectOrDamage = (context?: string | null) => {
@@ -37,88 +23,92 @@ const isDefectOrDamage = (context?: string | null) => {
   return ['defect', 'defective', 'broken', 'stopped working', 'damaged', 'cracked', 'wrong item', 'wrong size', 'wrong colour', 'wrong color'].some(term => text.includes(term));
 };
 
-const getRecord = async (recordType: string, externalId: string | null) => {
-  if (!externalId) return null;
-  const result = await query(
-    `SELECT data FROM support_data_records
-     WHERE record_type = $1 AND lower(external_id) = lower($2)
-     LIMIT 1`,
-    [recordType, externalId],
-  );
-  return result.rows[0]?.data ?? null;
-};
-
 const findCustomerByEmail = async (email?: string | null) => {
+  console.log("DB FETCH: findCustomerByEmail", email);
   if (!email) return null;
   const result = await query(
-    `SELECT data FROM support_data_records
-     WHERE record_type = 'customer' AND lower(data->>'email') = lower($1)
-     LIMIT 1`,
+    `SELECT * FROM customers WHERE lower(email) = lower($1) LIMIT 1`,
     [email],
   );
-  return result.rows[0]?.data ?? null;
+  if (result.rows.length === 0) {
+    return null;
+  }
+  return result.rows[0];
 };
 
 const findCustomerById = async (customerId?: string | null) => {
+  console.log("DB FETCH: findCustomerById", customerId);
   if (!customerId) return null;
-  return getRecord('customer', customerId);
+  const result = await query(
+    `SELECT * FROM customers WHERE customer_id = $1 LIMIT 1`,
+    [customerId],
+  );
+  if (result.rows.length === 0) {
+    return null;
+  }
+  return result.rows[0];
 };
 
 const findOrder = async (identifier?: string | null, customerEmail?: string | null) => {
+  console.log("DB FETCH: findOrder", { identifier, customerEmail });
+  
   if (identifier) {
-    const byId = await getRecord('order', identifier);
-    if (byId) return byId;
+    // If we have an ID, find it but verify it belongs to the email if provided
+    const result = await query(
+      `SELECT o.*, c.email as customer_email 
+       FROM orders o
+       JOIN customers c ON o.customer_id = c.customer_id
+       WHERE o.order_id = $1 LIMIT 1`,
+      [identifier],
+    );
+    const order = result.rows[0];
+    if (order) {
+      if (customerEmail && order.customer_email.toLowerCase() !== customerEmail.toLowerCase()) {
+        console.warn(`Order ${identifier} does not belong to ${customerEmail}`);
+        return null; // Security check failed
+      }
+      return order;
+    }
   }
 
-  const customer = await findCustomerByEmail(customerEmail ?? identifier ?? null);
-  if (!customer) return null;
+  if (customerEmail) {
+    const result = await query(
+      `SELECT o.* FROM orders o
+       JOIN customers c ON o.customer_id = c.customer_id
+       WHERE lower(c.email) = lower($1)
+       ORDER BY o.order_date DESC LIMIT 1`,
+      [customerEmail],
+    );
+    if (result.rows[0]) return result.rows[0];
+  }
 
-  const customerId = firstString(customer, ['customer_id', 'id']);
-  const result = await query(
-    `SELECT data FROM support_data_records
-     WHERE record_type = 'order'
-       AND (data->>'customer_id' = $1 OR lower(data->>'customer_email') = lower($2))
-     ORDER BY
-       CASE WHEN data->>'status' = 'processing' THEN 0 ELSE 1 END,
-       COALESCE(data->>'order_date', data->>'created_at', '') DESC
-     LIMIT 1`,
-    [customerId, customer.email],
-  );
-  return result.rows[0]?.data ?? null;
+  return null;
 };
 
 const findProductById = async (productId?: string | null) => {
+  console.log("DB FETCH: findProductById", productId);
   if (!productId) return null;
-  return getRecord('product', productId);
-};
-
-const findProductForOrder = async (order?: any | null) => {
-  const productId = firstString(order, ['product_id', 'sku']);
-  return findProductById(productId);
+  const result = await query(
+    `SELECT * FROM products WHERE product_id = $1 LIMIT 1`,
+    [productId],
+  );
+  if (result.rows.length === 0) {
+    return null;
+  }
+  return result.rows[0];
 };
 
 const getKbEntries = async (queryText?: string | null) => {
+  console.log("DB FETCH: getKbEntries", queryText);
   const text = queryText ?? '';
   const result = await query(
-    `SELECT data FROM support_data_records
-     WHERE record_type = 'knowledge_base'
-       AND ($1 = '' OR data::text ILIKE '%' || $1 || '%')
-     ORDER BY external_id ASC
+    `SELECT * FROM knowledge_base
+     WHERE $1 = '' OR title ILIKE '%' || $1 || '%' OR content ILIKE '%' || $1 || '%'
+     ORDER BY id ASC
      LIMIT 10`,
     [text],
   );
-
-  if (result.rows.length > 0) return result.rows.map(row => row.data);
-
-  const fallback = await query(
-    `SELECT data FROM support_data_records WHERE record_type = 'knowledge_base' ORDER BY external_id ASC LIMIT 10`,
-  );
-  return fallback.rows.map(row => row.data);
-};
-
-const includesPolicy = (entries: any[], terms: string[]) => {
-  const text = entries.map(entry => JSON.stringify(entry)).join('\n').toLowerCase();
-  return terms.some(term => text.includes(term));
+  return result.rows;
 };
 
 export const tools = {
@@ -140,8 +130,8 @@ export const tools = {
       return {
         query: queryText,
         results: results.map(entry => ({
-          title: firstString(entry, ['title', 'name', 'id']) ?? 'Knowledge Base',
-          excerpt: firstString(entry, ['content', 'body', 'text', 'excerpt']) ?? JSON.stringify(entry),
+          title: entry.title,
+          excerpt: entry.content.substring(0, 500),
         })),
       };
     });
@@ -150,96 +140,87 @@ export const tools = {
   check_refund_eligibility: async (orderId: string | null, customerEmail?: string | null, context?: string | null, asOfDate?: string | null) => {
     return deterministicToolCall(async () => {
       const order = await findOrder(orderId, customerEmail);
-      if (!order) return { order_id: orderId, eligible: false, reason: 'Order was not found in the imported dataset.' };
-
-      const customer = await findCustomerById(firstString(order, ['customer_id']));
-      const product = await findProductForOrder(order);
+      const customer = await findCustomerById(order.customer_id);
+      const product = await findProductById(order.product_id);
       const kbEntries = await getKbEntries('refund return damaged defective');
+      
       const effectiveDate = normalizeDate(asOfDate) ?? new Date().toISOString().slice(0, 10);
-      const returnDeadline = normalizeDate(firstString(order, ['return_deadline', 'return_by']));
-      const orderIdValue = firstString(order, ['order_id', 'id']) ?? orderId;
+      const returnDeadline = normalizeDate(order.return_deadline);
 
-      if (firstString(order, ['refund_status']) === 'refunded') {
-        return { order_id: orderIdValue, eligible: false, reason: 'Refund has already been processed for this order.' };
+      if (order.refund_status === 'refunded') {
+        return { order_id: order.order_id, eligible: false, reason: 'Refund has already been processed for this order.' };
       }
 
-      if (includesPolicy(kbEntries, ['registered online', 'non-returnable']) && /registered online|non-returnable/i.test(JSON.stringify(order) + JSON.stringify(product))) {
-        return { order_id: orderIdValue, eligible: false, reason: 'Imported policy marks this item as non-returnable.' };
+      const policyText = kbEntries.map(e => e.content).join('\n').toLowerCase();
+
+      if (policyText.includes('non-returnable') && (order.notes?.toLowerCase().includes('non-returnable') || product.notes?.toLowerCase().includes('non-returnable'))) {
+        return { order_id: order.order_id, eligible: false, reason: 'Product or order is marked as non-returnable.' };
       }
 
-      if (isDefectOrDamage(context) && includesPolicy(kbEntries, ['damaged', 'defective', 'wrong item'])) {
-        return { order_id: orderIdValue, eligible: true, reason: 'Imported policy allows refunds or replacement for damaged, defective, or wrong-item claims.' };
+      if (isDefectOrDamage(context) && (policyText.includes('damaged') || policyText.includes('defective'))) {
+        return { order_id: order.order_id, eligible: true, reason: 'Policy allows refunds for damaged or defective items.' };
       }
 
       if (returnDeadline && effectiveDate <= returnDeadline) {
-        return { order_id: orderIdValue, eligible: true, reason: `Within return window ending ${returnDeadline}.` };
+        return { order_id: order.order_id, eligible: true, reason: `Within return window ending ${returnDeadline}.` };
       }
 
-      const tier = firstString(customer, ['tier']);
-      if (tier === 'vip' && /pre-approved|exception|extended/i.test(JSON.stringify(customer) + JSON.stringify(order))) {
-        return { order_id: orderIdValue, eligible: true, reason: 'Customer record contains an imported exception or extended return approval.' };
+      if (customer.tier === 'vip' && customer.notes?.toLowerCase().includes('extended return')) {
+        return { order_id: order.order_id, eligible: true, reason: 'VIP customer with pre-approved extended return exception.' };
       }
 
-      return { order_id: orderIdValue, eligible: false, reason: returnDeadline ? `Return deadline expired on ${returnDeadline}.` : 'No return deadline or qualifying policy exception was found.' };
+      return { order_id: order.order_id, eligible: false, reason: returnDeadline ? `Return deadline expired on ${returnDeadline}.` : 'No return deadline found.' };
     });
   },
 
   issue_refund: async (orderId: string, amount: number) => {
-    return deterministicToolCall(async () => ({
-      order_id: orderId,
-      amount,
-      status: 'processed',
-      transaction_id: `refund-${orderId}`,
-    }));
+    console.log("DB FETCH: issue_refund", { orderId, amount });
+    return deterministicToolCall(async () => {
+      const order = await findOrder(orderId);
+      if (!order) throw new Error(`Cannot refund: Order ${orderId} not found.`);
+      if (order.refund_status === 'refunded') throw new Error(`Cannot refund: Order ${orderId} already refunded.`);
+      
+      return {
+        order_id: orderId,
+        amount,
+        status: 'processed',
+        transaction_id: `refund-${orderId}`,
+      };
+    });
   },
 
   cancel_order: async (orderId: string | null, customerEmail?: string | null) => {
     return deterministicToolCall(async () => {
       const order = await findOrder(orderId, customerEmail);
-      if (!order) return { order_id: orderId, cancelled: false, reason: 'Order was not found.' };
-
-      const status = firstString(order, ['status']) ?? 'unknown';
-      const id = firstString(order, ['order_id', 'id']) ?? orderId;
-      const kbEntries = await getKbEntries('cancellation cancel');
-      const policyAllowsProcessing = includesPolicy(kbEntries, ['processing', 'before shipment', 'before shipping']);
-
-      if (status === 'processing' && policyAllowsProcessing) {
-        return { order_id: id, cancelled: true, status: 'cancelled', reason: 'Imported cancellation policy allows processing orders to be cancelled.' };
-      }
+      if (!order) return { order_id: orderId, cancelled: false, reason: 'Order not found or access denied.' };
+      
+      const status = order.status;
+      
       if (status === 'processing') {
-        return { order_id: id, cancelled: true, status: 'cancelled', reason: 'Order is still processing and no imported policy blocks cancellation.' };
+        return { order_id: order.order_id, cancelled: true, status: 'cancelled', reason: 'Order was in processing and has been cancelled.' };
       }
-      return { order_id: id, cancelled: false, reason: `Order status is ${status}; it cannot be cancelled automatically.` };
+      return { order_id: order.order_id, cancelled: false, reason: `Order status is ${status}; it cannot be cancelled.` };
     });
   },
 
   check_warranty: async (orderId: string | null, productId: string | null, asOfDate?: string | null, context?: string | null) => {
     return deterministicToolCall(async () => {
       const order = await findOrder(orderId);
-      const product = await findProductById(productId) ?? await findProductForOrder(order);
-      const kbEntries = await getKbEntries('warranty defect manufacturing');
-      const orderIdValue = firstString(order, ['order_id', 'id']) ?? orderId;
-      const productIdValue = firstString(product, ['product_id', 'id', 'sku']) ?? productId;
+      const product = await findProductById(productId || order.product_id);
+      
+      const deliveryDate = normalizeDate(order.delivery_date);
+      const warrantyMonths = product.warranty_months || 0;
 
-      if (!order || !product) {
-        return { order_id: orderIdValue, product_id: productIdValue, valid: false, reason: 'Warranty cannot be verified because imported order or product data is missing.' };
-      }
-
-      const deliveryDate = normalizeDate(firstString(order, ['delivery_date', 'delivered_at']));
-      const warrantyMonths = firstNumber(product, ['warranty_months', 'warrantyMonths'], 0);
       if (!deliveryDate || warrantyMonths <= 0) {
-        return { order_id: orderIdValue, product_id: productIdValue, valid: false, reason: 'Imported product/order data does not define an active warranty period.' };
-      }
-
-      if (includesPolicy(kbEntries, ['manufacturing defect', 'defects only']) && !isDefectOrDamage(context)) {
-        return { order_id: orderIdValue, product_id: productIdValue, valid: false, reason: 'Imported warranty policy covers defects, but the ticket does not describe a qualifying defect.' };
+        return { order_id: order.order_id, product_id: product.product_id, valid: false, reason: 'No active warranty period found.' };
       }
 
       const effectiveDate = normalizeDate(asOfDate) ?? new Date().toISOString().slice(0, 10);
       const warrantyEnd = addMonths(deliveryDate, warrantyMonths).toISOString().slice(0, 10);
+      
       return {
-        order_id: orderIdValue,
-        product_id: productIdValue,
+        order_id: order.order_id,
+        product_id: product.product_id,
         valid: effectiveDate <= warrantyEnd,
         reason: effectiveDate <= warrantyEnd ? `Warranty active until ${warrantyEnd}.` : `Warranty expired on ${warrantyEnd}.`,
       };
@@ -247,10 +228,12 @@ export const tools = {
   },
 
   send_reply: async (ticketId: string, message: string) => {
+    console.log("DB FETCH: send_reply", { ticketId });
     return deterministicToolCall(async () => ({ ticket_id: ticketId, sent: true, message }));
   },
 
   escalate: async (ticketId: string, reason: string, priority: number) => {
+    console.log("DB FETCH: escalate", { ticketId, reason, priority });
     return deterministicToolCall(async () => ({
       ticket_id: ticketId,
       escalated_to: 'human_support',

@@ -4,6 +4,7 @@ import { ticketApi } from '../api/ticketApi';
 import { ProcessingStatus } from '../components/ProcessingStatus';
 import { TicketCard } from '../components/TicketCard';
 import { AuditTimeline } from '../components/AuditTimeline';
+import { UploadModal } from '../components/UploadModal';
 
 type TicketTab = 'all' | string;
 
@@ -27,7 +28,7 @@ export const Dashboard: React.FC = () => {
   } = useTickets();
 
   const [isSeeding, setIsSeeding] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [systemStatus, setSystemStatus] = useState<any>(null);
   const [lastImport, setLastImport] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TicketTab>('all');
@@ -48,28 +49,11 @@ export const Dashboard: React.FC = () => {
     }
   };
 
-  const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    setIsUploading(true);
-    try {
-      const parsed = JSON.parse(await file.text());
-      const res = await ticketApi.importData(file.name, parsed);
-      if (!res.success) {
-        alert(res.error?.message || 'Upload rejected by validation');
-      } else {
-        setLastImport(res.message || `Imported ${file.name}`);
-        await refresh();
-        const statusRes = await ticketApi.getSystemStatus();
-        if (statusRes.success) setSystemStatus(statusRes.data);
-      }
-    } catch (err: any) {
-      alert(`Invalid JSON upload: ${err.message}`);
-    } finally {
-      setIsUploading(false);
-      event.target.value = '';
-    }
+  const handleUploadSuccess = async (message: string) => {
+    setLastImport(message);
+    await refresh();
+    const statusRes = await ticketApi.getSystemStatus();
+    if (statusRes.success) setSystemStatus(statusRes.data);
   };
 
   const dynamicTabs = Array.from(new Set(tickets.map(ticket => ticket.status)))
@@ -112,18 +96,28 @@ export const Dashboard: React.FC = () => {
           <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--primary)' }}>
             ShopWave Agent <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>| Admin Console</span>
           </h1>
+          <div style={{ display: 'flex', gap: '1rem', marginTop: '0.25rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+            <span>Data Source: <strong style={{ color: 'var(--success)' }}>Database</strong></span>
+            {systemStatus?.counts && (
+              <>
+                <span>Customers: {systemStatus.counts.customers}</span>
+                <span>Orders: {systemStatus.counts.orders}</span>
+                <span>Products: {systemStatus.counts.products}</span>
+                <span>KB: {systemStatus.counts.kb}</span>
+              </>
+            )}
+            {systemStatus && (
+              <span>Active: {systemStatus.agent_active ? 'Yes' : 'No'}</span>
+            )}
+          </div>
         </div>
         <div className="header-actions">
-          <label className="btn-outline" style={{ cursor: isUploading ? 'not-allowed' : 'pointer' }}>
-            {isUploading ? 'Uploading...' : 'Upload JSON'}
-            <input
-              type="file"
-              accept="application/json,.json"
-              onChange={handleUpload}
-              disabled={isUploading}
-              style={{ display: 'none' }}
-            />
-          </label>
+          <button 
+            className="btn-outline" 
+            onClick={() => setIsModalOpen(true)}
+          >
+            Upload JSON Data
+          </button>
           <button 
             className="btn-outline" 
             onClick={handleSeed} 
@@ -138,7 +132,7 @@ export const Dashboard: React.FC = () => {
       </header>
 
       {lastImport && (
-        <div style={{ marginBottom: '1rem', color: 'var(--text-muted)', fontSize: '0.875rem' }}>
+        <div style={{ marginBottom: '1rem', color: 'var(--text-muted)', fontSize: '0.875rem', padding: '0.5rem 1rem', background: 'rgba(59, 130, 246, 0.1)', borderRadius: '8px', borderLeft: '4px solid var(--primary)' }}>
           {lastImport}
         </div>
       )}
@@ -171,7 +165,7 @@ export const Dashboard: React.FC = () => {
             <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>Loading tickets...</div>
           ) : tickets.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)', background: 'white', borderRadius: '12px', border: '1px dashed var(--border)' }}>
-              No tickets found. Seed data to begin.
+              No tickets found. Upload JSON or seed data to begin.
             </div>
           ) : filteredTickets.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)', background: 'white', borderRadius: '8px', border: '1px dashed var(--border)' }}>
@@ -193,6 +187,12 @@ export const Dashboard: React.FC = () => {
           <AuditTimeline logs={auditLogs} selectedTicket={selectedTicket} />
         </section>
       </main>
+
+      <UploadModal 
+        isOpen={isModalOpen} 
+        onClose={() => setIsModalOpen(false)} 
+        onSuccess={handleUploadSuccess} 
+      />
     </div>
   );
 };
