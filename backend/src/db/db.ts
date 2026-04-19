@@ -1,7 +1,12 @@
 import { Pool } from 'pg';
 
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) {
+  console.error("❌ DATABASE_URL is missing from environment variables!");
+}
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString,
 });
 
 export const query = async (text: string, params?: any[]) => {

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import pdf from 'pdf-parse';
 import { query } from '../db/db';
 
 export interface ImportDataset {
@@ -93,8 +94,43 @@ const normalizeTicket = (ticket: any, source: string) => {
   };
 };
 
-const normalizeKnowledgeBase = (knowledgeBase: ImportDataset['knowledge_base']) => {
+const normalizeKnowledgeBase = async (knowledgeBase: ImportDataset['knowledge_base']) => {
   if (!knowledgeBase) return [];
+
+  // Check for specialized upload format from UI (_type, _name, _data)
+  if (typeof knowledgeBase === 'object' && !Array.isArray(knowledgeBase) && (knowledgeBase as any)._type) {
+    const kb = knowledgeBase as any;
+    const type = kb._type;
+    const name = kb._name || 'Uploaded Knowledge Base';
+    let content = '';
+
+    if (type === 'md' || type === 'txt') {
+      content = kb._data;
+    } else if (type === 'pdf') {
+      try {
+        const base64Data = kb._data.includes(',') ? kb._data.split(',')[1] : kb._data;
+        const buffer = Buffer.from(base64Data, 'base64');
+        const pdfData = await pdf(buffer);
+        content = pdfData.text;
+      } catch (err: any) {
+        throw new Error(`Failed to parse PDF file: ${err.message}`);
+      }
+    }
+
+    if (type === 'md') {
+      return content
+        .split(/\n(?=##\s+)/)
+        .map((section, index) => ({
+          id: `kb-ui-${index + 1}`,
+          title: section.match(/^##\s+(.+)$/m)?.[1]?.trim() ?? `${name} Section ${index + 1}`,
+          content: section.trim(),
+        }))
+        .filter(entry => entry.content);
+    }
+
+    return [{ id: 'kb-ui-root', title: name, content }];
+  }
+
   if (typeof knowledgeBase === 'string') return [{ id: 'knowledge-base', title: 'Knowledge Base', content: knowledgeBase }];
   if (Array.isArray(knowledgeBase)) return knowledgeBase;
   if (typeof knowledgeBase === 'object') {
@@ -118,7 +154,7 @@ export const importDataset = async (dataset: ImportDataset, source = 'api'): Pro
   const customers = ensureArray(dataset.customers, 'customers');
   const orders = ensureArray(dataset.orders, 'orders');
   const products = ensureArray(dataset.products, 'products');
-  const knowledgeBase = normalizeKnowledgeBase(dataset.knowledge_base);
+  const knowledgeBase = await normalizeKnowledgeBase(dataset.knowledge_base);
   const errors: Array<{ type: string; index: number; error: string }> = [];
 
   if (dataset.replace !== false) {
