@@ -1,52 +1,60 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai"; // 1. Use the correct import
 import { LLMProvider, LLMResponse } from "../types";
 
 export class GeminiProvider implements LLMProvider {
   name = "gemini";
   lastStatus: 'active' | 'unavailable' | 'quota_exceeded' = 'unavailable';
   lastMessage = 'Not called';
-  private ai: GoogleGenAI;
+  private genAI: GoogleGenerativeAI; // 2. Rename for clarity
 
   constructor() {
-    this.ai = new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY!,
-    });
+    // 3. Ensure your API Key is actually being loaded
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("GEMINI_API_KEY is missing from .env file");
+    }
+    this.genAI = new GoogleGenerativeAI(apiKey);
   }
+
+  async listAvailableModels() {
+  const response = await fetch(`https://googleapis.com{process.env.GEMINI_API_KEY}`);
+  const data = await response.json();
+  console.log("AVAILABLE MODELS:", JSON.stringify(data, null, 2));
+}
 
   async analyze(content: string): Promise<LLMResponse | null> {
     try {
-      const response = await this.ai.models.generateContent({
-        model: "gemini-1.5-flash",
-        contents: `
-You are a support reasoning agent.
+      // 4. Use getGenerativeModel on the genAI instance
+      const model = this.genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" }); 
 
+      const prompt = `
+You are a support reasoning agent.
 STRICT RULES:
 - Return ONLY valid JSON
 - No extra text outside JSON
-- No explanations outside JSON
-
 Format:
 {
   "category": "refund | cancellation | shipping | warranty | general_query | ambiguous",
   "entities": {
-    "order_id": string | null,
-    "email": string | null,
-    "product_id": string | null
+    "order_id": "string | null",
+    "email": "string | null",
+    "product_id": "string | null"
   },
-  "reasoning": "clear explanation of decision",
-  "confidence": number (0 to 1)
+  "reasoning": "clear explanation",
+  "confidence": 0.9
 }
 
 Ticket:
-${content}
-`
-      });
+${content}`;
 
-      const text = response.text;
-      console.log(`[Gemini] RAW RESPONSE:`, text);
+      // 5. Call generateContent directly from the model object
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const text = response.text();
 
       if (!text) return null;
 
+      // Your existing JSON parsing logic
       const start = text.indexOf('{');
       const end = text.lastIndexOf('}');
       if (start === -1 || end === -1) return null;
@@ -54,18 +62,15 @@ ${content}
       const jsonString = text.slice(start, end + 1);
       const parsed = JSON.parse(jsonString);
 
-      if (!parsed.category || parsed.confidence === undefined) {
-          throw new Error("Invalid Gemini output structure");
-      }
-
       this.lastStatus = 'active';
       this.lastMessage = 'LLM active: gemini';
       return parsed;
+
     } catch (err: any) {
       const message = String(err?.message ?? err);
-      this.lastStatus = /quota|429|resource_exhausted|rate/i.test(message) ? 'quota_exceeded' : 'unavailable';
-      this.lastMessage = this.lastStatus === 'quota_exceeded' ? 'LLM quota exceeded' : 'LLM unavailable, using deterministic mode';
-      console.error("Gemini Provider Error:", err);
+      // Fixed regex to avoid triggering on the word "models" in the 404 error
+      this.lastStatus = /quota|429|resource_exhausted/i.test(message) ? 'quota_exceeded' : 'unavailable';
+      console.error("Gemini Provider Error:", message);
       return null;
     }
   }

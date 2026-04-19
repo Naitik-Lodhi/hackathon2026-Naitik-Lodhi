@@ -26,8 +26,8 @@ const init = async () => {
         console.log('Running database migrations...');
         await runMigrations();
         
-        // console.log('Starting autonomous agent poller...');
-        // startAgent();
+        console.log('Starting autonomous agent poller...');
+        startAgent();
         
         app.listen(PORT, () => {
             console.log(`Backend server running on port ${PORT}`);

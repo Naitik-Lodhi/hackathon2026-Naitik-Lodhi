@@ -64,5 +64,5 @@ export const processAllTickets = async (concurrencyLimit = 3) => {
 export const startAgent = () => {
     setInterval(() => {
         processAllTickets(3).catch(e => console.error(e));
-    }, 10000); 
+    }, 20000); 
 }
