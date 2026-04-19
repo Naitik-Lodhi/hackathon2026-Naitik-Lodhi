@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import pdf from 'pdf-parse';
+import * as pdf from 'pdf-parse';
 import { query } from '../db/db';
 
 export interface ImportDataset {
@@ -110,7 +110,9 @@ const normalizeKnowledgeBase = async (knowledgeBase: ImportDataset['knowledge_ba
       try {
         const base64Data = kb._data.includes(',') ? kb._data.split(',')[1] : kb._data;
         const buffer = Buffer.from(base64Data, 'base64');
-        const pdfData = await pdf(buffer);
+        // Handle potential differences in default export between environments
+        const parsePdf = (pdf as any).default || pdf;
+        const pdfData = await parsePdf(buffer);
         content = pdfData.text;
       } catch (err: any) {
         throw new Error(`Failed to parse PDF file: ${err.message}`);
