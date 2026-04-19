@@ -28,7 +28,9 @@ export const TicketCard: React.FC<TicketCardProps> = ({ ticket, isSelected, onSe
         display: '-webkit-box', 
         WebkitLineClamp: 2, 
         WebkitBoxOrient: 'vertical', 
-        overflow: 'hidden' 
+        overflow: 'hidden',
+        overflowWrap: 'anywhere',
+        wordBreak: 'break-word',
       }}>
         {ticket.content}
       </p>

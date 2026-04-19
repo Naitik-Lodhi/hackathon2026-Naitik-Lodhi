@@ -5,6 +5,16 @@ import { ProcessingStatus } from '../components/ProcessingStatus';
 import { TicketCard } from '../components/TicketCard';
 import { AuditTimeline } from '../components/AuditTimeline';
 
+type TicketTab = 'all' | string;
+
+const baseTicketTabs: Array<{ key: TicketTab; label: string }> = [
+  { key: 'all', label: 'All' },
+  { key: 'queued', label: 'Queue' },
+  { key: 'processing', label: 'Processing' },
+  { key: 'resolved', label: 'Resolved' },
+  { key: 'escalated', label: 'Escalated' },
+];
+
 export const Dashboard: React.FC = () => {
   const { 
     tickets, 
@@ -20,6 +30,7 @@ export const Dashboard: React.FC = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [systemStatus, setSystemStatus] = useState<any>(null);
   const [lastImport, setLastImport] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<TicketTab>('all');
 
   const handleSeed = async () => {
     setIsSeeding(true);
@@ -60,6 +71,29 @@ export const Dashboard: React.FC = () => {
       event.target.value = '';
     }
   };
+
+  const dynamicTabs = Array.from(new Set(tickets.map(ticket => ticket.status)))
+    .filter(status => !baseTicketTabs.some(tab => tab.key === status))
+    .map(status => ({ key: status, label: status.replace(/_/g, ' ') }));
+
+  const ticketTabs = [...baseTicketTabs, ...dynamicTabs];
+
+  const counts = ticketTabs.reduce<Record<string, number>>((acc, tab) => {
+    acc[tab.key] = tab.key === 'all'
+      ? tickets.length
+      : tickets.filter(ticket => ticket.status === tab.key).length;
+    return acc;
+  }, {
+    all: 0,
+    queued: 0,
+    processing: 0,
+    resolved: 0,
+    escalated: 0,
+  });
+
+  const filteredTickets = activeTab === 'all'
+    ? tickets
+    : tickets.filter(ticket => ticket.status === activeTab);
 
   const selectedTicket = tickets.find(t => t.id === selectedTicketId) || null;
 
@@ -113,15 +147,38 @@ export const Dashboard: React.FC = () => {
 
       <main className="main-grid">
         <section className="scroll-area">
-          <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem' }}>Ticket Queue ({tickets.length})</h3>
+          <div style={{ marginBottom: '1rem' }}>
+            <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.75rem' }}>
+              Tickets ({filteredTickets.length})
+            </h3>
+            <div className="ticket-tabs" role="tablist" aria-label="Ticket status filters">
+              {ticketTabs.map(tab => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === tab.key}
+                  className={`ticket-tab ${activeTab === tab.key ? 'active' : ''}`}
+                  onClick={() => setActiveTab(tab.key)}
+                >
+                  <span>{tab.label}</span>
+                  <span className="ticket-tab-count">{counts[tab.key]}</span>
+                </button>
+              ))}
+            </div>
+          </div>
           {loading && tickets.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>Loading tickets...</div>
           ) : tickets.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)', background: 'white', borderRadius: '12px', border: '1px dashed var(--border)' }}>
               No tickets found. Seed data to begin.
             </div>
+          ) : filteredTickets.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)', background: 'white', borderRadius: '8px', border: '1px dashed var(--border)' }}>
+              No {activeTab === 'all' ? '' : activeTab} tickets found.
+            </div>
           ) : (
-            tickets.map(ticket => (
+            filteredTickets.map(ticket => (
               <TicketCard 
                 key={ticket.id} 
                 ticket={ticket} 
